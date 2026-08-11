@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
+import { Component, type ReactNode } from "react";
+import { AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -95,19 +97,45 @@ function AppRoutes() {
   );
 }
 
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-8 text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-red-100 dark:bg-red-900/30">
+            <AlertTriangle className="h-8 w-8 text-red-600 dark:text-red-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">Something went wrong</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{(this.state.error as Error).message}</p>
+          </div>
+          <Button onClick={() => this.setState({ error: null })}>Try again</Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <PrefsProvider>
-      <AuthProvider>
-        <TooltipProvider>
-          <Toaster richColors position="top-right" />
-          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <AppRoutes />
-          </BrowserRouter>
-        </TooltipProvider>
-      </AuthProvider>
-    </PrefsProvider>
-  </QueryClientProvider>
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <PrefsProvider>
+        <AuthProvider>
+          <TooltipProvider>
+            <Toaster richColors position="top-right" />
+            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <ErrorBoundary>
+                <AppRoutes />
+              </ErrorBoundary>
+            </BrowserRouter>
+          </TooltipProvider>
+        </AuthProvider>
+      </PrefsProvider>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

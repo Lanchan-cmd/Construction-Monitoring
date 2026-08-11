@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Building2, MapPin, IndianRupee, Calendar, TrendingUp,
   Package, HardHat, Receipt, ListTodo, AlertTriangle, Images,
-  Construction, Plus, Check, X, Trash2, Edit,
+  Construction, Plus, Check, X,
 } from "lucide-react";
 import { supabase, PHOTOS_BUCKET } from "@/lib/supabase";
 import { useAuth, usePrefs } from "@/lib/auth";
@@ -29,6 +29,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
+import { PhotoGallery } from "@/components/PhotoGallery";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -944,7 +945,7 @@ function PhotosTab({ projectId, session }: { projectId: string; session: { user:
   const [photoType, setPhotoType] = useState("site");
   const [uploading, setUploading] = useState(false);
 
-  const { data: photos = [] } = useQuery({
+  const { data: photos = [], isLoading } = useQuery({
     queryKey: ["photos", projectId],
     queryFn: async () => {
       const { data, error } = await supabase.from("photos").select("*").eq("project_id", projectId).order("created_at", { ascending: false });
@@ -972,28 +973,20 @@ function PhotosTab({ projectId, session }: { projectId: string; session: { user:
     setUploading(false);
   };
 
-  const deletePhoto = async (photo: Photo) => {
-    await supabase.storage.from(PHOTOS_BUCKET).remove([photo.storage_path]);
-    const { error } = await supabase.from("photos").delete().eq("id", photo.id);
-    if (error) { toast.error(error.message); return; }
-    queryClient.invalidateQueries({ queryKey: ["photos", projectId] });
-    toast.success("Photo deleted");
-  };
-
   return (
     <div>
-      <div className="mb-4 rounded-lg border bg-muted/20 p-4">
+      <div className="mb-4 rounded-2xl border bg-muted/20 p-4">
         <h3 className="mb-3 text-sm font-semibold">Upload Photo</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="space-y-1.5"><Label>Type</Label>
             <Select value={photoType} onValueChange={setPhotoType}>
               <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>{["site", "inspection", "bill", "issue", "progress"].map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              <SelectContent>{["site", "inspection", "bill", "issue", "progress"].map((tp) => <SelectItem key={tp} value={tp}>{tp}</SelectItem>)}</SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5 sm:col-span-1"><Label>Caption</Label><Input value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Optional" /></div>
           <div className="flex items-end">
-            <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+            <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
               <Plus className="h-4 w-4" />
               {uploading ? t("common.loading", language) : "Choose Photo"}
               <input type="file" accept="image/*" onChange={handleUpload} className="hidden" disabled={uploading} />
@@ -1001,32 +994,7 @@ function PhotosTab({ projectId, session }: { projectId: string; session: { user:
           </div>
         </div>
       </div>
-
-      {photos.length === 0 ? (
-        <EmptyState icon={Images} title={t("common.noData", language)} />
-      ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {photos.map((photo) => (
-            <Card key={photo.id} className="group overflow-hidden">
-              <div className="relative aspect-square bg-muted">
-                {photo.public_url && (
-                  <img src={photo.public_url} alt={photo.caption ?? ""} className="h-full w-full object-cover" />
-                )}
-                <button
-                  onClick={() => deletePhoto(photo)}
-                  className="absolute right-2 top-2 rounded-lg bg-black/60 p-1.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <CardContent className="p-2">
-                <Badge variant="secondary" className="mb-1 text-[10px]">{photo.photo_type}</Badge>
-                {photo.caption && <p className="truncate text-xs text-muted-foreground">{photo.caption}</p>}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+      <PhotoGallery photos={photos} loading={isLoading} />
     </div>
   );
 }

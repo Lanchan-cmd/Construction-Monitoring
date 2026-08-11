@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { FileBarChart, FileText, FileSpreadsheet, Building2 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from "recharts";
+import { GradientBarChart, GradientAreaChart } from "@/components/charts";
 import { supabase } from "@/lib/supabase";
 import { useAuth, usePrefs } from "@/lib/auth";
 import { t } from "@/lib/i18n";
@@ -267,40 +267,29 @@ export default function ReportsPage() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
+        <Card className="rounded-card shadow-card">
           <CardHeader><CardTitle className="text-base">Expenses by Category</CardTitle></CardHeader>
           <CardContent>
             {categoryData.length === 0 ? (
               <EmptyState icon={FileBarChart} title={t("common.noData", language)} />
             ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={categoryData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis tickFormatter={(v) => formatINRCompact(v)} tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                  <Tooltip formatter={(v: number) => formatINR(v, language)} contentStyle={{ background: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "8px" }} />
-                  <Bar dataKey="value" fill="hsl(32 95% 50%)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <GradientBarChart
+                data={categoryData}
+                bars={[{ key: "value", color: "#f59e0b", label: "Amount" }]}
+                height={300}
+                formatter={(v) => formatINRCompact(v)}
+              />
             )}
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="rounded-card shadow-card">
           <CardHeader><CardTitle className="text-base">Progress Trend</CardTitle></CardHeader>
           <CardContent>
             {progressData.length === 0 ? (
               <EmptyState icon={FileBarChart} title={t("common.noData", language)} />
             ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={progressData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                  <Tooltip contentStyle={{ background: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "8px" }} />
-                  <Line type="monotone" dataKey="progress" stroke="hsl(32 95% 50%)" strokeWidth={3} />
-                </LineChart>
-              </ResponsiveContainer>
+              <GradientAreaChart data={progressData} dataKey="progress" xKey="date" color="#f59e0b" height={300} />
             )}
           </CardContent>
         </Card>

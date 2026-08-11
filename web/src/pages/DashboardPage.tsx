@@ -9,7 +9,7 @@ import {
   Users,
   TrendingUp,
 } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from "recharts";
+import { GradientBarChart, GradientAreaChart, DonutChart } from "@/components/charts";
 import { supabase } from "@/lib/supabase";
 import { useAuth, usePrefs } from "@/lib/auth";
 import { t } from "@/lib/i18n";
@@ -81,8 +81,6 @@ export default function DashboardPage() {
       return Object.entries(grouped).map(([name, value]) => ({ name, value }));
     },
   });
-
-  const PIE_COLORS = ["hsl(32 95% 50%)", "hsl(217 33% 40%)", "hsl(142 71% 45%)", "hsl(0 72% 51%)", "hsl(280 60% 50%)", "hsl(48 90% 50%)"];
 
   // Progress trend data
   const progressData = projects.slice(0, 5).map((p) => ({
@@ -159,7 +157,7 @@ export default function DashboardPage() {
       {/* Charts row */}
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Budget vs Spent */}
-        <Card>
+        <Card className="rounded-card shadow-card">
           <CardHeader>
             <CardTitle className="text-base">{t("dash.budgetVsSpent", language)}</CardTitle>
           </CardHeader>
@@ -167,23 +165,18 @@ export default function DashboardPage() {
             {budgetChartData.length === 0 ? (
               <EmptyState icon={Building2} title={t("common.noData", language)} />
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={budgetChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis tickFormatter={(v) => formatINRCompact(v)} tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                  <Tooltip formatter={(v: number) => formatINR(v, language)} contentStyle={{ background: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "8px" }} />
-                  <Legend />
-                  <Bar dataKey="Budget" fill="hsl(217 33% 50%)" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Spent" fill="hsl(32 95% 50%)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <GradientBarChart
+                data={budgetChartData}
+                bars={[{ key: "Budget", color: "#3b82f6", label: "Budget" }, { key: "Spent", color: "#f59e0b", label: "Spent" }]}
+                height={280}
+                formatter={(v) => formatINRCompact(v)}
+              />
             )}
           </CardContent>
         </Card>
 
         {/* Expense breakdown */}
-        <Card>
+        <Card className="rounded-card shadow-card">
           <CardHeader>
             <CardTitle className="text-base">{t("dash.expenseBreakdown", language)}</CardTitle>
           </CardHeader>
@@ -191,17 +184,7 @@ export default function DashboardPage() {
             {expenseByCategory.length === 0 ? (
               <EmptyState icon={IndianRupee} title={t("common.noData", language)} />
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <PieChart>
-                  <Pie data={expenseByCategory} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={(e) => e.name}>
-                    {expenseByCategory.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v: number) => formatINR(v, language)} contentStyle={{ background: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "8px" }} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
+              <DonutChart data={expenseByCategory} height={280} />
             )}
           </CardContent>
         </Card>
@@ -209,7 +192,7 @@ export default function DashboardPage() {
 
       {/* Progress trend + Recent projects */}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
+        <Card className="rounded-card shadow-card">
           <CardHeader>
             <CardTitle className="text-base">{t("dash.progressTrend", language)}</CardTitle>
           </CardHeader>
@@ -217,15 +200,7 @@ export default function DashboardPage() {
             {progressData.length === 0 ? (
               <EmptyState icon={TrendingUp} title={t("common.noData", language)} />
             ) : (
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={progressData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                  <Tooltip contentStyle={{ background: "hsl(var(--popover))", border: "1px solid hsl(var(--border))", borderRadius: "8px" }} />
-                  <Line type="monotone" dataKey="progress" stroke="hsl(32 95% 50%)" strokeWidth={3} dot={{ fill: "hsl(32 95% 50%)", r: 5 }} />
-                </LineChart>
-              </ResponsiveContainer>
+              <GradientAreaChart data={progressData} dataKey="progress" color="#f59e0b" height={250} />
             )}
           </CardContent>
         </Card>
