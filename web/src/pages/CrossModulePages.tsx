@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Package, HardHat, Receipt, ListTodo, AlertTriangle, Images,
-  Search, Plus, Check, X, CalendarCheck, TrendingUp,
+  Search, Plus, Check, X, CalendarCheck, TrendingUp, MessageSquare,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth, usePrefs } from "@/lib/auth";
@@ -746,6 +746,19 @@ export function PhotosPage() {
   const [uploading, setUploading] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [caption, setCaption] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const deletePhoto = async (photo: Photo, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Delete this photo?")) return;
+    setDeleting(photo.id);
+    await supabase.storage.from("site-photos").remove([photo.storage_path]);
+    const { error } = await supabase.from("photos").delete().eq("id", photo.id);
+    if (error) { toast.error(error.message); setDeleting(null); return; }
+    toast.success("Photo deleted");
+    queryClient.invalidateQueries({ queryKey: ["photos-all"] });
+    setDeleting(null);
+  };
 
   const { data: photos = [] } = useQuery({
     queryKey: ["photos-all"],
@@ -809,12 +822,19 @@ export function PhotosPage() {
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {photos.map((photo) => (
-            <Card key={photo.id} className="group cursor-pointer overflow-hidden" onClick={() => navigate(`/projects/${photo.project_id}`)}>
+            <Card key={photo.id} className="group relative cursor-pointer overflow-hidden" onClick={() => navigate(`/projects/${photo.project_id}`)}>
               <div className="relative aspect-square bg-muted">
                 {photo.public_url && <img src={photo.public_url} alt={photo.caption ?? ""} className="h-full w-full object-cover" />}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
                   <p className="truncate text-[10px] text-white">{map.get(photo.project_id)?.name ?? "Unknown"}</p>
                 </div>
+                <button
+                  onClick={(e) => deletePhoto(photo, e)}
+                  disabled={deleting === photo.id}
+                  className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-600 disabled:opacity-50"
+                >
+                  <X className="h-3 w-3" />
+                </button>
               </div>
               {photo.caption && (
                 <CardContent className="p-2"><p className="truncate text-xs text-muted-foreground">{photo.caption}</p></CardContent>
@@ -881,7 +901,26 @@ export function ProgressPage() {
 
 // ============================================================
 // Payments / Payroll page
+
 // ============================================================
+// Payments / Payroll page
+// ============================================================
+
+const FAST2SMS_KEY = import.meta.env.VITE_FAST2SMS_API_KEY as string;
+
+async function sendSMS(phone: string, message: string): Promise<boolean> {
+  try {
+    const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+      method: "POST",
+      headers: { authorization: FAST2SMS_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ route: "q", message, language: "english", flash: 0, numbers: phone }),
+    });
+    const json = await res.json();
+    return json.return === true;
+  } catch {
+    return false;
+  }
+}
 
 export function PaymentsPage() {
   const { language } = usePrefs();
@@ -889,8 +928,7 @@ export function PaymentsPage() {
   const { projects, map } = useProjectsMap();
   const queryClient = useQueryClient();
   const [projectId, setProjectId] = useState("all");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
+  const [sending, setSending] = useState(false);
 
   const { data: payments = [] } = useQuery({
     queryKey: ["payments-all", projectId],
@@ -923,7 +961,6 @@ export function PaymentsPage() {
     },
   });
 
-  // Calculate payroll per worker from attendance
   const payrollSummary = workers
     .filter((w) => projectId === "all" || w.project_id === projectId)
     .map((w) => {
@@ -933,7 +970,7 @@ export function PaymentsPage() {
       const totalDays = presentDays + halfDays * 0.5;
       const earned = totalDays * w.daily_wage;
       const paid = payments.filter((p) => p.worker_id === w.id).reduce((s, p) => s + p.amount, 0);
-      return { worker: w, presentDays, halfDays, totalDays, earned, paid, balance: earned - paid };
+      return { worker: w, totalDays, earned, paid, balance: earned - paid };
     });
 
   const totalEarned = payrollSummary.reduce((s, r) => s + r.earned, 0);
@@ -950,15 +987,47 @@ export function PaymentsPage() {
     toast.success("Payment recorded");
   };
 
+  const sendWeeklySMS = async () => {
+    if (!FAST2SMS_KEY || FAST2SMS_KEY === "<your_fast2sms_api_key>") {
+      toast.error("Add VITE_FAST2SMS_API_KEY to web/.env first");
+      return;
+    }
+    setSending(true);
+    const now = new Date();
+    const weekNum = Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7);
+    let sent = 0, failed = 0, skipped = 0;
+
+    for (const { worker, totalDays, earned, balance } of payrollSummary) {
+      if (!worker.phone) { skipped++; continue; }
+      const phone = worker.phone.replace(/\D/g, "").slice(-10);
+      if (phone.length !== 10) { skipped++; continue; }
+      const status = balance <= 0 ? "Paid" : "Pending";
+      const message = `Nirman: Dear ${worker.full_name}, Week ${weekNum} summary - ${totalDays} days worked, Rs.${Math.round(earned).toLocaleString("en-IN")} due. Status: ${status}. -Nirman App`;
+      const ok = await sendSMS(phone, message);
+      ok ? sent++ : failed++;
+    }
+
+    setSending(false);
+    if (sent > 0) toast.success(`SMS sent to ${sent} worker${sent > 1 ? "s" : ""}`);
+    if (failed > 0) toast.error(`Failed for ${failed} worker${failed > 1 ? "s" : ""}`);
+    if (skipped > 0) toast.info(`${skipped} worker${skipped > 1 ? "s" : ""} skipped (no phone number)`);
+    if (sent === 0 && failed === 0 && skipped === payrollSummary.length) toast.error("No workers with valid phone numbers");
+  };
+
   return (
     <div>
       <PageHeader
         title="Payments & Payroll"
         description={`Earned: ${formatINR(totalEarned, language)} • Paid: ${formatINR(totalPaid, language)} • Balance: ${formatINR(totalBalance, language)}`}
+        action={
+          <Button size="sm" onClick={sendWeeklySMS} disabled={sending} className="gap-1.5">
+            <MessageSquare className="h-3.5 w-3.5" />
+            {sending ? "Sending..." : "Send Weekly SMS"}
+          </Button>
+        }
       />
 
-      {/* Project filter */}
-      <div className="mb-4 flex gap-3">
+      <div className="mb-4">
         <Select value={projectId} onValueChange={setProjectId}>
           <SelectTrigger className="w-full sm:w-64"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -968,7 +1037,6 @@ export function PaymentsPage() {
         </Select>
       </div>
 
-      {/* Summary cards */}
       <div className="mb-6 grid grid-cols-3 gap-4">
         <Card><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Total Earned</p>
@@ -984,7 +1052,6 @@ export function PaymentsPage() {
         </CardContent></Card>
       </div>
 
-      {/* Payroll table */}
       <Card className="mb-6">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -992,6 +1059,7 @@ export function PaymentsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Worker</TableHead>
+                  <TableHead>Phone</TableHead>
                   <TableHead>Project</TableHead>
                   <TableHead className="text-right">Days</TableHead>
                   <TableHead className="text-right">Daily Wage</TableHead>
@@ -1005,6 +1073,9 @@ export function PaymentsPage() {
                 {payrollSummary.map(({ worker, totalDays, earned, paid, balance }) => (
                   <TableRow key={worker.id}>
                     <TableCell className="font-medium">{worker.full_name}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {worker.phone ?? <span className="text-red-400">No phone</span>}
+                    </TableCell>
                     <TableCell><ProjectCell projectId={worker.project_id} map={map} navigate={() => {}} /></TableCell>
                     <TableCell className="text-right">{totalDays}</TableCell>
                     <TableCell className="text-right">{formatINR(worker.daily_wage, language)}</TableCell>
@@ -1014,7 +1085,7 @@ export function PaymentsPage() {
                     <TableCell>
                       {balance > 0 && (
                         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => markPaid(worker.id, worker.project_id, balance)}>
-                          Pay ₹{Math.round(balance).toLocaleString("en-IN")}
+                          Pay
                         </Button>
                       )}
                     </TableCell>
@@ -1026,7 +1097,6 @@ export function PaymentsPage() {
         </CardContent>
       </Card>
 
-      {/* Payment history */}
       <p className="mb-3 text-sm font-semibold">Payment History</p>
       {payments.length === 0 ? (
         <EmptyState icon={Receipt} title="No payments recorded yet" />

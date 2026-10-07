@@ -262,6 +262,14 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun deletePhoto(photo: Photo, projectId: String) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) { dataRepo.deletePhoto(photo) }
+            showToast(if (success) "Photo deleted" else "Failed to delete")
+            if (success) _photos.value = dataRepo.getPhotos(projectId)
+        }
+    }
+
     fun uploadPhoto(projectId: String, fileName: String, bytes: ByteArray, caption: String?, photoType: String) {
         viewModelScope.launch {
             val userId = dataRepo.currentUserId ?: ""

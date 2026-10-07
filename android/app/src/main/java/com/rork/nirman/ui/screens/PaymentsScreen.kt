@@ -6,14 +6,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.rork.nirman.data.Payment
 import com.rork.nirman.ui.viewmodel.AppViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -26,6 +35,9 @@ fun PaymentsScreen(navController: NavController, viewModel: AppViewModel) {
 
     var selectedProjectId by remember { mutableStateOf(projects.firstOrNull()?.id ?: "") }
     var showDialog by remember { mutableStateOf(false) }
+    var smsSending by remember { mutableStateOf(false) }
+    var smsResult by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(selectedProjectId) {
         if (selectedProjectId.isNotEmpty()) {
@@ -41,6 +53,36 @@ fun PaymentsScreen(navController: NavController, viewModel: AppViewModel) {
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                smsSending = true
+                                smsResult = ""
+                                val project = projects.find { it.id == selectedProjectId }
+                                val weekNum = LocalDate.now().let {
+                                    it.dayOfYear / 7 + 1
+                                }
+                                var sent = 0
+                                workers.filter { !it.phone.isNullOrBlank() }.forEach { worker ->
+                                    val workerPayments = payments.filter { it.workerId == worker.id }
+                                    val totalPaid = workerPayments.filter { it.status == "paid" }.sumOf { it.amount }
+                                    val msg = "Nirman: Week $weekNum summary for ${worker.fullName}. " +
+                                        "Project: ${project?.name ?: ""}. " +
+                                        "Total paid: Rs.${"%.0f".format(totalPaid)}. " +
+                                        "Daily wage: Rs.${"%.0f".format(worker.dailyWage)}."
+                                    val ok = sendSmsToWorker(worker.phone!!, msg)
+                                    if (ok) sent++
+                                }
+                                smsSending = false
+                                smsResult = "SMS sent to $sent worker(s)"
+                            }
+                        },
+                        enabled = !smsSending && selectedProjectId.isNotEmpty()
+                    ) {
+                        Icon(Icons.Default.Send, contentDescription = "Send Weekly SMS")
                     }
                 }
             )
@@ -82,6 +124,14 @@ fun PaymentsScreen(navController: NavController, viewModel: AppViewModel) {
                 }
             }
 
+            if (smsResult.isNotEmpty()) {
+                Text(
+                    smsResult,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             // Summary card
             val totalPaid = payments.filter { it.status == "paid" }.sumOf { it.amount }
             val totalPending = payments.filter { it.status == "pending" }.sumOf { it.amount }
@@ -176,6 +226,9 @@ private fun AddPaymentDialog(
     var status by remember { mutableStateOf("paid") }
     var workerExpanded by remember { mutableStateOf(false) }
     var methodExpanded by remember { mutableStateOf(false) }
+    var submitted by remember { mutableStateOf(false) }
+    val amountError = submitted && (amount.toDoubleOrNull() ?: 0.0) <= 0.0
+    val workerError = submitted && selectedWorkerId.isBlank()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -204,9 +257,11 @@ private fun AddPaymentDialog(
                 OutlinedTextField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Amount (₹)") },
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text("Amount (₹) *") },
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = amountError
                 )
+                if (amountError) Text("Amount must be greater than 0", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 // Method selector
                 ExposedDropdownMenuBox(expanded = methodExpanded, onExpandedChange = { methodExpanded = it }) {
                     OutlinedTextField(
@@ -231,18 +286,43 @@ private fun AddPaymentDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                val amt = amount.toDoubleOrNull() ?: return@TextButton
-                onConfirm(Payment(
-                    workerId = selectedWorkerId,
-                    projectId = projectId,
-                    amount = amt,
-                    paymentDate = LocalDate.now().toString(),
-                    status = status,
-                    method = method,
-                    paidBy = currentUserId,
-                ))
+                submitted = true
+                val amt = amount.toDoubleOrNull() ?: 0.0
+                if (amt > 0.0 && selectedWorkerId.isNotBlank()) {
+                    onConfirm(Payment(
+                        workerId = selectedWorkerId,
+                        projectId = projectId,
+                        amount = amt,
+                        paymentDate = LocalDate.now().toString(),
+                        status = status,
+                        method = method,
+                        paidBy = currentUserId,
+                    ))
+                }
             }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
+}
+
+private suspend fun sendSmsToWorker(phone: String, message: String): Boolean = withContext(Dispatchers.IO) {
+    try {
+        val url = URL("https://www.fast2sms.com/dev/bulkV2")
+        val conn = url.openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.setRequestProperty("authorization", "yqbRrNXU71zMCHPt0auSTBEOFwInv6l5dDm8pxkZiAV4cJe2W3jc5UEnyGqosH8AXOkFVhJwpduglbfQ")
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.doOutput = true
+        val body = JSONObject().apply {
+            put("route", "q")
+            put("message", message)
+            put("language", "english")
+            put("flash", 0)
+            put("numbers", phone)
+        }.toString()
+        OutputStreamWriter(conn.outputStream).use { it.write(body) }
+        conn.responseCode == 200
+    } catch (e: Exception) {
+        false
+    }
 }

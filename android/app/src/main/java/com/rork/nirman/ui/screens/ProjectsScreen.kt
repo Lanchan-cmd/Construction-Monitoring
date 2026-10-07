@@ -192,17 +192,23 @@ private fun CreateProjectDialog(
     var taluk by remember { mutableStateOf("") }
     var village by remember { mutableStateOf("") }
     var pinCode by remember { mutableStateOf("") }
+    var submitted by remember { mutableStateOf(false) }
+    val nameError = submitted && name.isBlank()
+    val budgetError = submitted && (budget.toDoubleOrNull() ?: 0.0) <= 0.0
+    val pinError = submitted && pinCode.isNotBlank() && !pinCode.matches(Regex("^\\d{6}$"))
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("New Project") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Project Name *") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Project Name *") }, modifier = Modifier.fillMaxWidth(), singleLine = true, isError = nameError)
+                if (nameError) Text("Project name is required", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Description") }, modifier = Modifier.fillMaxWidth(), maxLines = 2)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(value = budget, onValueChange = { budget = it }, label = { Text("Budget (₹) *") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                OutlinedTextField(value = budget, onValueChange = { budget = it }, label = { Text("Budget (₹) *") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), isError = budgetError)
+                if (budgetError) Text("Budget must be greater than 0", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(value = state, onValueChange = { state = it }, label = { Text("State") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Spacer(Modifier.height(8.dp))
@@ -212,18 +218,22 @@ private fun CreateProjectDialog(
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(value = village, onValueChange = { village = it }, label = { Text("Village") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(value = pinCode, onValueChange = { pinCode = it }, label = { Text("PIN Code") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(value = pinCode, onValueChange = { pinCode = it }, label = { Text("PIN Code") }, modifier = Modifier.fillMaxWidth(), singleLine = true, isError = pinError)
+                if (pinError) Text("PIN code must be 6 digits", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (name.isNotBlank() && userId.isNotBlank()) {
+                    submitted = true
+                    val budgetVal = budget.toDoubleOrNull() ?: 0.0
+                    val pinValid = pinCode.isBlank() || pinCode.matches(Regex("^\\d{6}$"))
+                    if (name.isNotBlank() && budgetVal > 0.0 && pinValid && userId.isNotBlank()) {
                         onCreate(
                             Project(
                                 name = name,
                                 description = description.ifBlank { null },
-                                budget = budget.toDoubleOrNull() ?: 0.0,
+                                budget = budgetVal,
                                 state = state.ifBlank { null },
                                 district = district.ifBlank { null },
                                 taluk = taluk.ifBlank { null },

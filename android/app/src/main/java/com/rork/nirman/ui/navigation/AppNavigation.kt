@@ -15,6 +15,15 @@ import com.rork.nirman.ui.screens.PhotosScreen
 import com.rork.nirman.ui.screens.ReportsScreen
 import com.rork.nirman.ui.screens.LogsScreen
 import com.rork.nirman.ui.screens.PaymentsScreen
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import com.rork.nirman.ui.viewmodel.AppViewModel
 
 /**
@@ -30,7 +39,17 @@ import com.rork.nirman.ui.viewmodel.AppViewModel
 fun AppNavigation() {
     val navController = rememberNavController()
     val viewModel: AppViewModel = viewModel()
+    val toast by viewModel.toast.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
+    LaunchedEffect(toast) {
+        toast?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearToast()
+        }
+    }
+
+    Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { _ ->
     NavHost(
         navController = navController,
         startDestination = "login"
@@ -83,4 +102,5 @@ fun AppNavigation() {
             PaymentsScreen(navController = navController, viewModel = viewModel)
         }
     }
+    } // end Scaffold
 }

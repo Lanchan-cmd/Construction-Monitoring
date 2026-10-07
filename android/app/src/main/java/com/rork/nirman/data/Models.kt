@@ -179,6 +179,25 @@ data class Payment(
 )
 
 @Serializable
+data class SafetyChecklist(
+    val id: String = "",
+    @SerialName("project_id") val projectId: String = "",
+    @SerialName("worker_id") val workerId: String = "",
+    @SerialName("check_date") val checkDate: String = "",
+    val helmet: Boolean = false,
+    val boots: Boolean = false,
+    val harness: Boolean = false,
+    val gloves: Boolean = false,
+    val vest: Boolean = false,
+    val goggles: Boolean = false,
+    @SerialName("photo_path") val photoPath: String? = null,
+    @SerialName("public_url") val publicUrl: String? = null,
+    val notes: String? = null,
+    @SerialName("recorded_by") val recordedBy: String? = null,
+    @SerialName("created_at") val createdAt: String = "",
+)
+
+@Serializable
 data class SystemLog(
     val id: String = "",
     @SerialName("actor_id") val actorId: String? = null,

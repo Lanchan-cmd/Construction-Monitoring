@@ -205,6 +205,24 @@ export interface Equipment {
   updated_at: string;
 }
 
+export interface SafetyChecklist {
+  id: string;
+  project_id: string;
+  worker_id: string;
+  check_date: string;
+  helmet: boolean;
+  boots: boolean;
+  harness: boolean;
+  gloves: boolean;
+  vest: boolean;
+  goggles: boolean;
+  photo_path: string | null;
+  public_url: string | null;
+  notes: string | null;
+  recorded_by: string | null;
+  created_at: string;
+}
+
 export interface SystemLog {
   id: string;
   actor_id: string | null;

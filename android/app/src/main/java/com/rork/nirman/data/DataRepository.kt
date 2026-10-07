@@ -297,6 +297,15 @@ class DataRepository {
         null
     }
 
+    suspend fun deletePhoto(photo: Photo): Boolean = try {
+        storage.from(PHOTOS_BUCKET).delete(listOf(photo.storagePath))
+        db.from("photos").delete { filter { eq("id", photo.id) } }
+        true
+    } catch (e: Exception) {
+        Log.e("DataRepo", "deletePhoto: ${e.message}")
+        false
+    }
+
     // ---------- Payments ----------
 
     suspend fun getPayments(projectId: String): List<Payment> = try {
