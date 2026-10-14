@@ -1153,16 +1153,79 @@ export function PaymentsPage() {
     if (sent === 0 && failed === 0 && skipped === payrollSummary.length) toast.error("No workers with valid phone numbers");
   };
 
+  // Send to all via device SMS app at once using comma/semicolon separated numbers
+  const sendBatchDeviceSMS = () => {
+    const validPhones = payrollSummary
+      .filter((r) => r.worker.phone && r.worker.phone.replace(/\D/g, "").slice(-10).length === 10)
+      .map((r) => r.worker.phone!.replace(/\D/g, "").slice(-10));
+
+    if (validPhones.length === 0) {
+      toast.error("No workers with valid phone numbers");
+      return;
+    }
+
+    const now = new Date();
+    const weekNum = Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7);
+    const summaryMsg = `Nirman: Week ${weekNum} payment updates available. Please check with site engineer/contractor for details. -Nirman App`;
+
+    // Modern Android/iOS supports comma separated numbers in sms: protocol
+    const separator = navigator.userAgent.includes("iPhone") ? "&" : ",";
+    const phoneList = validPhones.join(separator);
+    window.open(`sms:${phoneList}?body=${encodeURIComponent(summaryMsg)}`, "_self");
+    toast.success(`Opened device SMS composer for ${validPhones.length} workers`);
+  };
+
+  // Generate full weekly payroll report and share to WhatsApp group or contact
+  const shareFullReportWhatsApp = () => {
+    const now = new Date();
+    const weekNum = Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7);
+    let msg = `*Nirman App — Week ${weekNum} Payroll Summary* 🏗️\n`;
+    msg += `Total Workers: ${payrollSummary.length}\n`;
+    msg += `Total Earned: Rs.${Math.round(totalEarned).toLocaleString("en-IN")}\n`;
+    msg += `Total Balance Due: Rs.${Math.round(totalBalance).toLocaleString("en-IN")}\n\n`;
+    msg += `*Worker Breakdown:*\n`;
+
+    payrollSummary.forEach(({ worker, totalDays, earned, balance }, i) => {
+      const status = balance <= 0 ? "✅ Paid" : `⏳ Due Rs.${Math.round(balance).toLocaleString("en-IN")}`;
+      msg += `${i + 1}. ${worker.full_name}: ${totalDays} days, Rs.${Math.round(earned).toLocaleString("en-IN")} (${status})\n`;
+    });
+
+    const url = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    window.open(url, "_blank");
+  };
+
   return (
     <div>
       <PageHeader
         title="Payments & Payroll"
         description={`Earned: ${formatINR(totalEarned, language)} • Paid: ${formatINR(totalPaid, language)} • Balance: ${formatINR(totalBalance, language)}`}
         action={
-          <Button size="sm" onClick={sendWeeklySMS} disabled={sending} className="gap-1.5">
-            <MessageSquare className="h-3.5 w-3.5" />
-            {sending ? "Sending..." : "Send Weekly SMS"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={shareFullReportWhatsApp}
+              className="gap-1.5 border-green-500 text-green-700 hover:bg-green-50 dark:text-green-400"
+              title="Share entire weekly payroll report to a WhatsApp group or chat"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              WhatsApp All Report
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={sendBatchDeviceSMS}
+              className="gap-1.5 border-blue-500 text-blue-700 hover:bg-blue-50 dark:text-blue-400"
+              title="Open your device default SMS with all worker numbers filled in"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              Batch Device SMS
+            </Button>
+            <Button size="sm" onClick={sendWeeklySMS} disabled={sending} className="gap-1.5">
+              <MessageSquare className="h-3.5 w-3.5" />
+              {sending ? "Sending..." : "Fast2SMS (Gateway)"}
+            </Button>
+          </div>
         }
       />
 
