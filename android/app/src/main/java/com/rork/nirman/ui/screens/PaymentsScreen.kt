@@ -56,33 +56,29 @@ fun PaymentsScreen(navController: NavController, viewModel: AppViewModel) {
                     }
                 },
                 actions = {
+                    val context = androidx.compose.ui.platform.LocalContext.current
                     IconButton(
                         onClick = {
-                            scope.launch {
-                                smsSending = true
-                                smsResult = ""
-                                val project = projects.find { it.id == selectedProjectId }
-                                val weekNum = LocalDate.now().let {
-                                    it.dayOfYear / 7 + 1
-                                }
-                                var sent = 0
-                                workers.filter { !it.phone.isNullOrBlank() }.forEach { worker ->
-                                    val workerPayments = payments.filter { it.workerId == worker.id }
-                                    val totalPaid = workerPayments.filter { it.status == "paid" }.sumOf { it.amount }
-                                    val msg = "Nirman: Week $weekNum summary for ${worker.fullName}. " +
-                                        "Project: ${project?.name ?: ""}. " +
-                                        "Total paid: Rs.${"%.0f".format(totalPaid)}. " +
-                                        "Daily wage: Rs.${"%.0f".format(worker.dailyWage)}."
-                                    val ok = sendSmsToWorker(worker.phone!!, msg)
-                                    if (ok) sent++
-                                }
-                                smsSending = false
-                                smsResult = "SMS sent to $sent worker(s)"
+                            val project = projects.find { it.id == selectedProjectId }
+                            val weekNum = LocalDate.now().let { it.dayOfYear / 7 + 1 }
+                            val sb = StringBuilder()
+                            sb.append("Nirman App — Week $weekNum Payroll Summary 🏗️\n")
+                            sb.append("Project: ${project?.name ?: ""}\n\n")
+                            workers.forEachIndexed { i, worker ->
+                                val workerPayments = payments.filter { it.workerId == worker.id }
+                                val totalPaid = workerPayments.filter { it.status == "paid" }.sumOf { it.amount }
+                                sb.append("${i + 1}. ${worker.fullName}: Daily Rs.${"%.0f".format(worker.dailyWage)} | Total Paid: Rs.${"%.0f".format(totalPaid)}\n")
                             }
+                            val sendIntent = android.content.Intent().apply {
+                                action = android.content.Intent.ACTION_SEND
+                                putExtra(android.content.Intent.EXTRA_TEXT, sb.toString())
+                                type = "text/plain"
+                            }
+                            context.startActivity(android.content.Intent.createChooser(sendIntent, "Share Payroll Summary"))
                         },
-                        enabled = !smsSending && selectedProjectId.isNotEmpty()
+                        enabled = selectedProjectId.isNotEmpty()
                     ) {
-                        Icon(Icons.Default.Send, contentDescription = "Send Weekly SMS")
+                        Icon(Icons.Default.Send, contentDescription = "Share Weekly Payroll via WhatsApp or SMS")
                     }
                 }
             )
@@ -303,26 +299,4 @@ private fun AddPaymentDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-}
-
-private suspend fun sendSmsToWorker(phone: String, message: String): Boolean = withContext(Dispatchers.IO) {
-    try {
-        val url = URL("https://www.fast2sms.com/dev/bulkV2")
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("authorization", "yqbRrNXU71zMCHPt0auSTBEOFwInv6l5dDm8pxkZiAV4cJe2W3jc5UEnyGqosH8AXOkFVhJwpduglbfQ")
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.doOutput = true
-        val body = JSONObject().apply {
-            put("route", "q")
-            put("message", message)
-            put("language", "english")
-            put("flash", 0)
-            put("numbers", phone)
-        }.toString()
-        OutputStreamWriter(conn.outputStream).use { it.write(body) }
-        conn.responseCode == 200
-    } catch (e: Exception) {
-        false
-    }
 }

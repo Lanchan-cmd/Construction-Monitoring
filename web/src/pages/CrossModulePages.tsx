@@ -1000,33 +1000,12 @@ export function ProgressPage() {
 // Payments / Payroll page
 // ============================================================
 
-const FAST2SMS_KEY = import.meta.env.VITE_FAST2SMS_API_KEY as string;
-
-async function sendSMS(phone: string, message: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
-      method: "POST",
-      headers: { authorization: FAST2SMS_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ route: "q", message, language: "english", flash: 0, numbers: phone }),
-    });
-    const json = await res.json();
-    if (json.return === true) {
-      return { ok: true };
-    }
-    const errMsg = Array.isArray(json.message) ? json.message.join(", ") : (json.message || "Failed to send SMS");
-    return { ok: false, error: errMsg };
-  } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : "Network error" };
-  }
-}
-
 export function PaymentsPage() {
   const { language } = usePrefs();
   const { session } = useAuth();
   const { projects, map } = useProjectsMap();
   const queryClient = useQueryClient();
   const [projectId, setProjectId] = useState("all");
-  const [sending, setSending] = useState(false);
   const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const { data: payments = [] } = useQuery({
@@ -1121,38 +1100,6 @@ export function PaymentsPage() {
     window.open(`sms:${cleanPhone}?body=${encodeURIComponent(message)}`, "_self");
   };
 
-  const sendWeeklySMS = async () => {
-    if (!FAST2SMS_KEY || FAST2SMS_KEY === "<your_fast2sms_api_key>") {
-      toast.error("Add VITE_FAST2SMS_API_KEY to web/.env first");
-      return;
-    }
-    setSending(true);
-    let sent = 0, failed = 0, skipped = 0;
-    let lastError = "";
-
-    for (const { worker, totalDays, earned, balance } of payrollSummary) {
-      if (!worker.phone) { skipped++; continue; }
-      const phone = worker.phone.replace(/\D/g, "").slice(-10);
-      if (phone.length !== 10) { skipped++; continue; }
-      const message = getWorkerMessage(worker.full_name, totalDays, earned, balance).replace(/\*/g, "");
-      const res = await sendSMS(phone, message);
-      if (res.ok) {
-        sent++;
-      } else {
-        failed++;
-        if (res.error) lastError = res.error;
-      }
-    }
-
-    setSending(false);
-    if (sent > 0) toast.success(`SMS sent to ${sent} worker${sent > 1 ? "s" : ""}`);
-    if (failed > 0) {
-      toast.error(lastError ? `SMS gateway: ${lastError}` : `Failed for ${failed} worker${failed > 1 ? "s" : ""}`, { duration: 7000 });
-    }
-    if (skipped > 0) toast.info(`${skipped} worker${skipped > 1 ? "s" : ""} skipped (no phone number)`);
-    if (sent === 0 && failed === 0 && skipped === payrollSummary.length) toast.error("No workers with valid phone numbers");
-  };
-
   // Send to all via device SMS app at once using comma/semicolon separated numbers
   const sendBatchDeviceSMS = () => {
     const validPhones = payrollSummary
@@ -1220,10 +1167,6 @@ export function PaymentsPage() {
             >
               <MessageSquare className="h-3.5 w-3.5" />
               Batch Device SMS
-            </Button>
-            <Button size="sm" onClick={sendWeeklySMS} disabled={sending} className="gap-1.5">
-              <MessageSquare className="h-3.5 w-3.5" />
-              {sending ? "Sending..." : "Fast2SMS (Gateway)"}
             </Button>
           </div>
         }
