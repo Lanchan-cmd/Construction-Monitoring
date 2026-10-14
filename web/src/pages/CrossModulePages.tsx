@@ -1002,7 +1002,7 @@ export function ProgressPage() {
 
 const FAST2SMS_KEY = import.meta.env.VITE_FAST2SMS_API_KEY as string;
 
-async function sendSMS(phone: string, message: string): Promise<boolean> {
+async function sendSMS(phone: string, message: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
       method: "POST",
@@ -1010,9 +1010,13 @@ async function sendSMS(phone: string, message: string): Promise<boolean> {
       body: JSON.stringify({ route: "q", message, language: "english", flash: 0, numbers: phone }),
     });
     const json = await res.json();
-    return json.return === true;
-  } catch {
-    return false;
+    if (json.return === true) {
+      return { ok: true };
+    }
+    const errMsg = Array.isArray(json.message) ? json.message.join(", ") : (json.message || "Failed to send SMS");
+    return { ok: false, error: errMsg };
+  } catch (err: unknown) {
+    return { ok: false, error: err instanceof Error ? err.message : "Network error" };
   }
 }
 
@@ -1099,29 +1103,52 @@ export function PaymentsPage() {
     toast.success("Payment recorded");
   };
 
+  const getWorkerMessage = (workerName: string, totalDays: number, earned: number, balance: number) => {
+    const now = new Date();
+    const weekNum = Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7);
+    const status = balance <= 0 ? "Paid" : "Pending";
+    return `*Nirman App* 🏗️\nDear ${workerName},\nWeek ${weekNum} summary:\n• Days worked: ${totalDays}\n• Total earned: Rs.${Math.round(earned).toLocaleString("en-IN")}\n• Balance due: Rs.${Math.round(balance).toLocaleString("en-IN")}\n• Status: ${status}\n- Nirman Construction Management`;
+  };
+
+  const openWhatsApp = (phone: string, message: string) => {
+    const cleanPhone = phone.replace(/\D/g, "").slice(-10);
+    const url = `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
+  };
+
+  const openNativeSMS = (phone: string, message: string) => {
+    const cleanPhone = phone.replace(/\D/g, "").slice(-10);
+    window.open(`sms:${cleanPhone}?body=${encodeURIComponent(message)}`, "_self");
+  };
+
   const sendWeeklySMS = async () => {
     if (!FAST2SMS_KEY || FAST2SMS_KEY === "<your_fast2sms_api_key>") {
       toast.error("Add VITE_FAST2SMS_API_KEY to web/.env first");
       return;
     }
     setSending(true);
-    const now = new Date();
-    const weekNum = Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7);
     let sent = 0, failed = 0, skipped = 0;
+    let lastError = "";
 
     for (const { worker, totalDays, earned, balance } of payrollSummary) {
       if (!worker.phone) { skipped++; continue; }
       const phone = worker.phone.replace(/\D/g, "").slice(-10);
       if (phone.length !== 10) { skipped++; continue; }
-      const status = balance <= 0 ? "Paid" : "Pending";
-      const message = `Nirman: Dear ${worker.full_name}, Week ${weekNum} summary - ${totalDays} days worked, Rs.${Math.round(earned).toLocaleString("en-IN")} due. Status: ${status}. -Nirman App`;
-      const ok = await sendSMS(phone, message);
-      if (ok) { sent++; } else { failed++; }
+      const message = getWorkerMessage(worker.full_name, totalDays, earned, balance).replace(/\*/g, "");
+      const res = await sendSMS(phone, message);
+      if (res.ok) {
+        sent++;
+      } else {
+        failed++;
+        if (res.error) lastError = res.error;
+      }
     }
 
     setSending(false);
     if (sent > 0) toast.success(`SMS sent to ${sent} worker${sent > 1 ? "s" : ""}`);
-    if (failed > 0) toast.error(`Failed for ${failed} worker${failed > 1 ? "s" : ""}`);
+    if (failed > 0) {
+      toast.error(lastError ? `SMS gateway: ${lastError}` : `Failed for ${failed} worker${failed > 1 ? "s" : ""}`, { duration: 7000 });
+    }
     if (skipped > 0) toast.info(`${skipped} worker${skipped > 1 ? "s" : ""} skipped (no phone number)`);
     if (sent === 0 && failed === 0 && skipped === payrollSummary.length) toast.error("No workers with valid phone numbers");
   };
@@ -1195,11 +1222,35 @@ export function PaymentsPage() {
                     <TableCell className="text-right text-green-600">{formatINR(paid, language)}</TableCell>
                     <TableCell className="text-right font-bold text-amber-600">{formatINR(balance, language)}</TableCell>
                     <TableCell>
-                      {balance > 0 && (
-                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => markPaid(worker.id, worker.project_id, balance)}>
-                          Pay
-                        </Button>
-                      )}
+                      <div className="flex items-center gap-1.5 justify-end">
+                        {worker.phone && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
+                              title="Send free WhatsApp summary"
+                              onClick={() => openWhatsApp(worker.phone!, getWorkerMessage(worker.full_name, totalDays, earned, balance))}
+                            >
+                              WhatsApp
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                              title="Send via mobile SMS app (free SIM plan)"
+                              onClick={() => openNativeSMS(worker.phone!, getWorkerMessage(worker.full_name, totalDays, earned, balance).replace(/\*/g, ""))}
+                            >
+                              SMS
+                            </Button>
+                          </>
+                        )}
+                        {balance > 0 && (
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => markPaid(worker.id, worker.project_id, balance)}>
+                            Pay
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
