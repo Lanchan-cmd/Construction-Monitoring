@@ -214,7 +214,7 @@ class AppViewModel : ViewModel() {
 
     fun populateRealTimeMaterials(projectId: String) {
         viewModelScope.launch {
-            _isLoading.value = true
+            _dataLoading.value = true
             withContext(Dispatchers.IO) {
                 ConstructionCatalog.REAL_TIME_MATERIALS.forEach { item ->
                     dataRepo.addMaterial(
@@ -229,7 +229,7 @@ class AppViewModel : ViewModel() {
                     )
                 }
             }
-            _isLoading.value = false
+            _dataLoading.value = false
             showToast("Populated real-time materials")
             _materials.value = withContext(Dispatchers.IO) { dataRepo.getMaterials(projectId) }
         }
@@ -302,7 +302,14 @@ class AppViewModel : ViewModel() {
         }
     }
 
-    fun uploadPhoto(projectId: String, fileName: String, bytes: ByteArray, caption: String?, photoType: String) {
+    fun uploadPhoto(
+        projectId: String,
+        fileName: String,
+        bytes: ByteArray,
+        caption: String?,
+        photoType: String,
+        onDone: (() -> Unit)? = null,
+    ) {
         viewModelScope.launch {
             val userId = dataRepo.currentUserId ?: ""
             val photo = withContext(Dispatchers.IO) {
@@ -310,6 +317,7 @@ class AppViewModel : ViewModel() {
             }
             showToast(if (photo != null) "Photo uploaded" else "Upload failed")
             if (photo != null) _photos.value = dataRepo.getPhotos(projectId)
+            onDone?.invoke()
         }
     }
 
