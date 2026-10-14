@@ -348,6 +348,26 @@ class DataRepository {
         false
     }
 
+    // ---------- Safety Checklists ----------
+
+    suspend fun getSafetyChecklists(projectId: String): List<SafetyChecklist> = try {
+        db.from("safety_checklists").select {
+            filter { eq("project_id", projectId) }
+            order("created_at", Order.DESCENDING)
+        }.decodeList()
+    } catch (e: Exception) {
+        Log.e("DataRepo", "getSafetyChecklists: ${e.message}")
+        emptyList()
+    }
+
+    suspend fun addSafetyChecklist(checklist: SafetyChecklist): Boolean = try {
+        db.from("safety_checklists").insert(checklist)
+        true
+    } catch (e: Exception) {
+        Log.e("DataRepo", "addSafetyChecklist: ${e.message}")
+        false
+    }
+
     // ---------- Profiles (Admin) ----------
 
     suspend fun getProfiles(): List<Profile> = try {

@@ -17,6 +17,7 @@ import com.rork.nirman.data.Issue
 import com.rork.nirman.data.DailyProgress
 import com.rork.nirman.data.Payment
 import com.rork.nirman.data.Photo
+import com.rork.nirman.data.SafetyChecklist
 import com.rork.nirman.data.SystemLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -77,6 +78,9 @@ class AppViewModel : ViewModel() {
 
     private val _photos = MutableStateFlow<List<Photo>>(emptyList())
     val photos: StateFlow<List<Photo>> = _photos.asStateFlow()
+
+    private val _safetyChecklists = MutableStateFlow<List<SafetyChecklist>>(emptyList())
+    val safetyChecklists: StateFlow<List<SafetyChecklist>> = _safetyChecklists.asStateFlow()
 
     private val _profiles = MutableStateFlow<List<Profile>>(emptyList())
     val profiles: StateFlow<List<Profile>> = _profiles.asStateFlow()
@@ -163,6 +167,7 @@ class AppViewModel : ViewModel() {
                 _issues.value = dataRepo.getIssues(projectId)
                 _dailyProgress.value = dataRepo.getDailyProgress(projectId)
                 _photos.value = dataRepo.getPhotos(projectId)
+                _safetyChecklists.value = dataRepo.getSafetyChecklists(projectId)
             }
             _dataLoading.value = false
         }
@@ -305,6 +310,18 @@ class AppViewModel : ViewModel() {
             }
             showToast(if (photo != null) "Photo uploaded" else "Upload failed")
             if (photo != null) _photos.value = dataRepo.getPhotos(projectId)
+        }
+    }
+
+    fun addSafetyChecklist(checklist: SafetyChecklist) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) { dataRepo.addSafetyChecklist(checklist) }
+            showToast(if (success) "Safety check saved" else "Failed to save")
+            if (success) {
+                _safetyChecklists.value = withContext(Dispatchers.IO) {
+                    dataRepo.getSafetyChecklists(checklist.projectId)
+                }
+            }
         }
     }
 

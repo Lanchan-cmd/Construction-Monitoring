@@ -38,6 +38,7 @@ import com.rork.nirman.data.Issue
 import com.rork.nirman.data.Material
 import com.rork.nirman.data.MaterialRequest
 import com.rork.nirman.data.Photo
+import com.rork.nirman.data.SafetyChecklist
 import com.rork.nirman.data.Task
 import com.rork.nirman.data.Worker
 import androidx.compose.foundation.lazy.LazyRow
@@ -89,7 +90,7 @@ fun ProjectDetailScreen(
         viewModel.loadAttendance(projectId, attendanceDate)
     }
 
-    val tabs = listOf("Overview", "Materials", "Labour", "Expenses", "Progress", "Tasks", "Issues", "Photos")
+    val tabs = listOf("Overview", "Materials", "Labour", "Expenses", "Progress", "Tasks", "Issues", "Photos", "Safety")
     val canEdit = user?.role == "admin" || user?.role == "engineer"
     val canAdd = user?.role == "admin" || user?.role == "engineer" || user?.role == "contractor"
 
@@ -182,6 +183,14 @@ fun ProjectDetailScreen(
                 7 -> PhotosTab(
                     photos = viewModel.photos.collectAsState().value,
                     onDelete = { photo -> viewModel.deletePhoto(photo, projectId) }
+                )
+                8 -> SafetyTab(
+                    projectId = projectId,
+                    workers = workers,
+                    safetyChecklists = viewModel.safetyChecklists.collectAsState().value,
+                    currentUserId = user?.id ?: "",
+                    canAdd = canAdd,
+                    onAdd = { checklist -> viewModel.addSafetyChecklist(checklist) },
                 )
             }
         }
@@ -1118,4 +1127,281 @@ private fun AddProgressDialog(onDismiss: () -> Unit, onAdd: (String, Int, Int, D
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+// ─────────────────────────────────────────────
+// Safety Tab
+// ─────────────────────────────────────────────
+
+@Composable
+fun SafetyTab(
+    projectId: String,
+    workers: List<Worker>,
+    safetyChecklists: List<SafetyChecklist>,
+    currentUserId: String,
+    canAdd: Boolean,
+    onAdd: (SafetyChecklist) -> Unit,
+) {
+    var showForm by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (canAdd) {
+            item {
+                Button(
+                    onClick = { showForm = !showForm },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (showForm) "Cancel Check" else "+ New Safety Check")
+                }
+            }
+        }
+
+        if (showForm) {
+            item {
+                SafetyCheckForm(
+                    projectId = projectId,
+                    workers = workers,
+                    currentUserId = currentUserId,
+                    onSave = { checklist ->
+                        onAdd(checklist)
+                        showForm = false
+                    },
+                )
+            }
+        }
+
+        if (safetyChecklists.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("No safety checks yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        } else {
+            items(safetyChecklists) { checklist ->
+                SafetyCheckCard(checklist, workers)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SafetyCheckForm(
+    projectId: String,
+    workers: List<Worker>,
+    currentUserId: String,
+    onSave: (SafetyChecklist) -> Unit,
+) {
+    var selectedWorkerId by remember { mutableStateOf("") }
+    var helmet by remember { mutableStateOf(false) }
+    var boots by remember { mutableStateOf(false) }
+    var harness by remember { mutableStateOf(false) }
+    var gloves by remember { mutableStateOf(false) }
+    var vest by remember { mutableStateOf(false) }
+    var goggles by remember { mutableStateOf(false) }
+    var notes by remember { mutableStateOf("") }
+    var workerMenuExpanded by remember { mutableStateOf(false) }
+
+    val ppeItems = listOf(
+        "Helmet" to helmet,
+        "Boots" to boots,
+        "Harness" to harness,
+        "Gloves" to gloves,
+        "Vest" to vest,
+        "Goggles" to goggles,
+    )
+
+    Card(shape = RoundedCornerShape(12.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("New Safety Check", fontWeight = FontWeight.SemiBold)
+
+            // Worker picker
+            if (workers.isNotEmpty()) {
+                Box {
+                    OutlinedButton(
+                        onClick = { workerMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            workers.find { it.id == selectedWorkerId }?.fullName ?: "Select Worker (optional)",
+                            fontSize = 13.sp,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = workerMenuExpanded,
+                        onDismissRequest = { workerMenuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("None") },
+                            onClick = { selectedWorkerId = ""; workerMenuExpanded = false },
+                        )
+                        workers.forEach { w ->
+                            DropdownMenuItem(
+                                text = { Text(w.fullName) },
+                                onClick = { selectedWorkerId = w.id; workerMenuExpanded = false },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // PPE toggles
+            Text("PPE Compliance", fontWeight = FontWeight.Medium, fontSize = 13.sp)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PpeToggle("Helmet 🪖", helmet) { helmet = it }
+                    PpeToggle("Boots 👟", boots) { boots = it }
+                    PpeToggle("Harness 🦺", harness) { harness = it }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PpeToggle("Gloves 🧤", gloves) { gloves = it }
+                    PpeToggle("Vest 🦺", vest) { vest = it }
+                    PpeToggle("Goggles 🥽", goggles) { goggles = it }
+                }
+            }
+
+            // Compliance score
+            val score = listOf(helmet, boots, harness, gloves, vest, goggles).count { it }
+            val color = when {
+                score >= 5 -> Color(0xFF16A34A)
+                score >= 3 -> Color(0xFFF59E0B)
+                else -> MaterialTheme.colorScheme.error
+            }
+            Card(
+                colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f)),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Compliance Score", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        "$score / 6 PPE items",
+                        color = color,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                    )
+                }
+            }
+
+            // Notes
+            OutlinedTextField(
+                value = notes,
+                onValueChange = { notes = it },
+                label = { Text("Notes (optional)") },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 2,
+            )
+
+            Button(
+                onClick = {
+                    onSave(
+                        SafetyChecklist(
+                            projectId = projectId,
+                            workerId = selectedWorkerId,
+                            checkDate = todayISO(),
+                            helmet = helmet,
+                            boots = boots,
+                            harness = harness,
+                            gloves = gloves,
+                            vest = vest,
+                            goggles = goggles,
+                            notes = notes.ifBlank { null },
+                            recordedBy = currentUserId,
+                        )
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Save Safety Check")
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.PpeToggle(label: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
+    FilterChip(
+        selected = checked,
+        onClick = { onToggle(!checked) },
+        label = { Text(label, fontSize = 11.sp) },
+        modifier = Modifier.weight(1f),
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = Color(0xFF16A34A).copy(alpha = 0.15f),
+            selectedLabelColor = Color(0xFF16A34A),
+        ),
+    )
+}
+
+@Composable
+private fun SafetyCheckCard(checklist: SafetyChecklist, workers: List<Worker>) {
+    val workerName = workers.find { it.id == checklist.workerId }?.fullName
+    val score = listOf(checklist.helmet, checklist.boots, checklist.harness,
+        checklist.gloves, checklist.vest, checklist.goggles).count { it }
+    val color = when {
+        score >= 5 -> Color(0xFF16A34A)
+        score >= 3 -> Color(0xFFF59E0B)
+        else -> MaterialTheme.colorScheme.error
+    }
+
+    Card(shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text(checklist.checkDate, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    if (workerName != null) Text(workerName, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(
+                    "$score/6",
+                    color = color,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            // PPE grid
+            val ppeList = listOf(
+                "Helmet" to checklist.helmet,
+                "Boots" to checklist.boots,
+                "Harness" to checklist.harness,
+                "Gloves" to checklist.gloves,
+                "Vest" to checklist.vest,
+                "Goggles" to checklist.goggles,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ppeList.forEach { (name, present) ->
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("${if (present) "✓" else "✗"} $name", fontSize = 10.sp) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (present) Color(0xFF16A34A).copy(alpha = 0.1f)
+                            else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                            labelColor = if (present) Color(0xFF16A34A) else MaterialTheme.colorScheme.error,
+                        ),
+                    )
+                }
+            }
+            if (!checklist.notes.isNullOrBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(checklist.notes, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
 }
