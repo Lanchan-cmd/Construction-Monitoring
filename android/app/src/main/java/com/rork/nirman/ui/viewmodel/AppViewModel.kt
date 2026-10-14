@@ -8,6 +8,7 @@ import com.rork.nirman.data.Profile
 import com.rork.nirman.data.Project
 import com.rork.nirman.data.Worker
 import com.rork.nirman.data.AttendanceRecord
+import com.rork.nirman.data.ConstructionCatalog
 import com.rork.nirman.data.Material
 import com.rork.nirman.data.MaterialRequest
 import com.rork.nirman.data.Expense
@@ -134,9 +135,12 @@ class AppViewModel : ViewModel() {
     // ---------- Data loading ----------
 
     fun loadProjects() {
+        val user = currentUser.value ?: return
         viewModelScope.launch {
             _dataLoading.value = true
-            _projects.value = withContext(Dispatchers.IO) { dataRepo.getProjects() }
+            _projects.value = withContext(Dispatchers.IO) {
+                dataRepo.getMyProjects(user.id, user.role)
+            }
             _dataLoading.value = false
         }
     }
@@ -200,6 +204,29 @@ class AppViewModel : ViewModel() {
             val success = withContext(Dispatchers.IO) { dataRepo.addMaterial(material) }
             showToast(if (success) "Material added" else "Failed to add material")
             if (success) _materials.value = dataRepo.getMaterials(material.projectId)
+        }
+    }
+
+    fun populateRealTimeMaterials(projectId: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            withContext(Dispatchers.IO) {
+                ConstructionCatalog.REAL_TIME_MATERIALS.forEach { item ->
+                    dataRepo.addMaterial(
+                        Material(
+                            projectId = projectId,
+                            name = item.name,
+                            category = item.category,
+                            unit = item.unit,
+                            unitCost = item.unitCost,
+                            gstPercent = item.gstPercent,
+                        )
+                    )
+                }
+            }
+            _isLoading.value = false
+            showToast("Populated real-time materials")
+            _materials.value = withContext(Dispatchers.IO) { dataRepo.getMaterials(projectId) }
         }
     }
 

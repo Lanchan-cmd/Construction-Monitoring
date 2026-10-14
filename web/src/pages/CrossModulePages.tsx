@@ -3,10 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Package, HardHat, Receipt, ListTodo, AlertTriangle, Images,
-  Search, Plus, Check, X, CalendarCheck, TrendingUp, MessageSquare,
+  Search, Plus, Check, X, CalendarCheck, TrendingUp, MessageSquare, Sparkles,
 } from "lucide-react";
+import { REAL_TIME_EXPENSES } from "@/lib/constructionCatalog";
 import { supabase } from "@/lib/supabase";
-import { useAuth, usePrefs } from "@/lib/auth";
+import { useAuth, usePrefs, useMyProjectIds } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { formatINR, formatDate, todayISO, calcGST, calcTotalWithGST } from "@/lib/format";
 import type { Material, MaterialRequest, Worker, Expense, Task, Issue, Photo, Project, AttendanceRecord, AttendanceStatus, DailyProgress, Payment } from "@/lib/types";
@@ -32,12 +33,20 @@ import { toast } from "sonner";
 // Shared helpers for cross-module pages
 // ============================================================
 
-/** Fetch all projects as a lookup map for project names. */
+/** Fetch projects as a lookup map, scoped to the current user's role. */
 function useProjectsMap() {
+  const { ids: myIds, isAdmin } = useMyProjectIds();
+
   const { data: projects = [] } = useQuery({
-    queryKey: ["projects"],
+    queryKey: ["projects-map", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("projects").select("id, name, status").order("name");
+      let query = supabase.from("projects").select("id, name, status").order("name");
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as Pick<Project, "id" | "name" | "status">[];
+        query = query.in("id", myIds);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return data as Pick<Project, "id" | "name" | "status">[];
     },
@@ -71,20 +80,33 @@ export function MaterialsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const { profile } = useAuth();
   const canEdit = profile?.role === "admin" || profile?.role === "engineer";
+  const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const { data: materials = [] } = useQuery({
-    queryKey: ["materials-all"],
+    queryKey: ["materials-all", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("materials").select("*").order("name");
+      let q = supabase.from("materials").select("*").order("name");
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as Material[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as Material[];
     },
   });
 
   const { data: requests = [] } = useQuery({
-    queryKey: ["material-requests-all"],
+    queryKey: ["material-requests-all", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("material_requests").select("*").order("created_at", { ascending: false });
+      let q = supabase.from("material_requests").select("*").order("created_at", { ascending: false });
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as MaterialRequest[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as MaterialRequest[];
     },
@@ -174,11 +196,18 @@ export function LabourPage() {
   const navigate = useNavigate();
   const { map } = useProjectsMap();
   const [search, setSearch] = useState("");
+  const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const { data: workers = [] } = useQuery({
-    queryKey: ["workers-all"],
+    queryKey: ["workers-all", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("workers").select("*").order("full_name");
+      let q = supabase.from("workers").select("*").order("full_name");
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as Worker[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as Worker[];
     },
@@ -238,11 +267,18 @@ export function AttendancePage() {
   const navigate = useNavigate();
   const { map } = useProjectsMap();
   const [date, setDate] = useState(todayISO());
+  const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const { data: records = [] } = useQuery({
-    queryKey: ["attendance-all", date],
+    queryKey: ["attendance-all", date, isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("attendance").select("*, workers(full_name)").eq("date", date);
+      let q = supabase.from("attendance").select("*, workers(full_name)").eq("date", date);
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as (AttendanceRecord & { workers: { full_name: string } | null })[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as (AttendanceRecord & { workers: { full_name: string } | null })[];
     },
@@ -305,11 +341,18 @@ export function ExpensesPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const { data: expenses = [] } = useQuery({
-    queryKey: ["expenses-all"],
+    queryKey: ["expenses-all", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("expenses").select("*").order("expense_date", { ascending: false });
+      let q = supabase.from("expenses").select("*").order("expense_date", { ascending: false });
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as Expense[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as Expense[];
     },
@@ -378,6 +421,7 @@ export function ExpensesPage() {
 
 function ExpenseDialog({ open, onOpenChange, projects, userId, onSaved }: { open: boolean; onOpenChange: (o: boolean) => void; projects: Pick<Project, "id" | "name">[]; userId: string; onSaved: () => void }) {
   const { language } = usePrefs();
+  const [selectedPreset, setSelectedPreset] = useState<string>("custom");
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [category, setCategory] = useState("material");
   const [description, setDescription] = useState("");
@@ -388,6 +432,17 @@ function ExpenseDialog({ open, onOpenChange, projects, userId, onSaved }: { open
 
   const amt = parseFloat(amount) || 0;
   const gst = parseFloat(gstPercent) || 0;
+
+  const handlePresetSelect = (title: string) => {
+    setSelectedPreset(title);
+    const found = REAL_TIME_EXPENSES.find((e) => e.title === title);
+    if (found) {
+      setCategory(found.category);
+      setDescription(found.description);
+      setAmount(found.amount.toString());
+      setGstPercent(found.gstPercent.toString());
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -410,6 +465,24 @@ function ExpenseDialog({ open, onOpenChange, projects, userId, onSaved }: { open
       <DialogContent className="sm:max-w-md">
         <DialogHeader><DialogTitle>{t("expense.add", language)}</DialogTitle></DialogHeader>
         <form onSubmit={handleSave} className="space-y-3">
+          {/* Preset quick picker */}
+          <div className="space-y-1.5 rounded-lg border bg-amber-50/50 p-2.5 dark:bg-amber-950/20">
+            <Label className="text-xs font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+              Real-Time Expense Benchmark Preset
+            </Label>
+            <Select value={selectedPreset} onValueChange={handlePresetSelect}>
+              <SelectTrigger className="bg-background text-xs"><SelectValue placeholder="Choose an expense preset" /></SelectTrigger>
+              <SelectContent className="max-h-60">
+                {REAL_TIME_EXPENSES.map((e) => (
+                  <SelectItem key={e.title} value={e.title} className="text-xs">
+                    {e.title} — ₹{e.amount.toLocaleString("en-IN")} ({e.category})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="space-y-1.5"><Label>{t("nav.projects", language)} *</Label>
             <Select value={projectId} onValueChange={setProjectId}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -452,11 +525,18 @@ export function TasksPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const { data: tasks = [] } = useQuery({
-    queryKey: ["tasks-all"],
+    queryKey: ["tasks-all", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
+      let q = supabase.from("tasks").select("*").order("created_at", { ascending: false });
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as Task[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as Task[];
     },
@@ -606,11 +686,18 @@ export function IssuesPage() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const { data: issues = [] } = useQuery({
-    queryKey: ["issues-all"],
+    queryKey: ["issues-all", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("issues").select("*").order("created_at", { ascending: false });
+      let q = supabase.from("issues").select("*").order("created_at", { ascending: false });
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as Issue[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as Issue[];
     },
@@ -747,6 +834,7 @@ export function PhotosPage() {
   const [projectId, setProjectId] = useState("");
   const [caption, setCaption] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const deletePhoto = async (photo: Photo, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -761,9 +849,15 @@ export function PhotosPage() {
   };
 
   const { data: photos = [] } = useQuery({
-    queryKey: ["photos-all"],
+    queryKey: ["photos-all", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("photos").select("*").order("created_at", { ascending: false });
+      let q = supabase.from("photos").select("*").order("created_at", { ascending: false });
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as Photo[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as Photo[];
     },
@@ -929,11 +1023,18 @@ export function PaymentsPage() {
   const queryClient = useQueryClient();
   const [projectId, setProjectId] = useState("all");
   const [sending, setSending] = useState(false);
+  const { ids: myIds, isAdmin } = useMyProjectIds();
 
   const { data: payments = [] } = useQuery({
-    queryKey: ["payments-all", projectId],
+    queryKey: ["payments-all", projectId, isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
       let q = supabase.from("payments").select("*, workers(full_name)").order("payment_date", { ascending: false });
+      // Scope to user's projects first, then optionally narrow to a specific project
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as (Payment & { workers: { full_name: string } | null })[];
+        q = q.in("project_id", myIds);
+      }
       if (projectId !== "all") q = q.eq("project_id", projectId);
       const { data, error } = await q;
       if (error) throw error;
@@ -942,18 +1043,29 @@ export function PaymentsPage() {
   });
 
   const { data: workers = [] } = useQuery({
-    queryKey: ["workers-all"],
+    queryKey: ["workers-all", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("workers").select("*").order("full_name");
+      let q = supabase.from("workers").select("*").order("full_name");
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as Worker[];
+        q = q.in("project_id", myIds);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as Worker[];
     },
   });
 
   const { data: attendance = [] } = useQuery({
-    queryKey: ["attendance-payroll", projectId],
+    queryKey: ["attendance-payroll", projectId, isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
       let q = supabase.from("attendance").select("*");
+      if (!isAdmin && myIds !== null) {
+        if (myIds.length === 0) return [] as AttendanceRecord[];
+        q = q.in("project_id", myIds);
+      }
       if (projectId !== "all") q = q.eq("project_id", projectId);
       const { data, error } = await q;
       if (error) throw error;
@@ -1004,7 +1116,7 @@ export function PaymentsPage() {
       const status = balance <= 0 ? "Paid" : "Pending";
       const message = `Nirman: Dear ${worker.full_name}, Week ${weekNum} summary - ${totalDays} days worked, Rs.${Math.round(earned).toLocaleString("en-IN")} due. Status: ${status}. -Nirman App`;
       const ok = await sendSMS(phone, message);
-      ok ? sent++ : failed++;
+      if (ok) { sent++; } else { failed++; }
     }
 
     setSending(false);

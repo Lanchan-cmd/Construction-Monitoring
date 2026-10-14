@@ -49,7 +49,7 @@ fun DashboardScreen(
     val projects by viewModel.projects.collectAsState()
     val dataLoading by viewModel.dataLoading.collectAsState()
 
-    LaunchedEffect(Unit) { viewModel.loadProjects() }
+    LaunchedEffect(user?.id) { if (user != null) viewModel.loadProjects() }
 
     Scaffold(
         topBar = {

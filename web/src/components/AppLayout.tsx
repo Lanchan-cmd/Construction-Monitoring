@@ -51,6 +51,15 @@ const ROLE_COLORS: Record<UserRole, string> = {
   labour:     "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
 };
 
+const ROLE_BANNER: Record<UserRole, string> = {
+  admin:      "bg-red-600/20 text-red-400",
+  engineer:   "bg-blue-600/20 text-blue-400",
+  contractor: "bg-amber-600/20 text-amber-400",
+  owner:      "bg-purple-600/20 text-purple-400",
+  supervisor: "bg-green-600/20 text-green-400",
+  labour:     "bg-gray-600/20 text-gray-400",
+};
+
 export function AppLayout({ children }: { children: ReactNode }) {
   const { profile, signOut } = useAuth();
   const { language, theme, setLanguage, toggleTheme } = usePrefs();
@@ -93,6 +102,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
           >
             <X className="h-5 w-5" />
           </button>
+        </div>
+
+        {/* Role accent banner */}
+        <div className={cn(
+          "px-5 py-1.5 text-[11px] font-semibold uppercase tracking-wider border-b border-sidebar-border",
+          ROLE_BANNER[profile.role]
+        )}>
+          {t(`role.${profile.role}`, language)} Dashboard
         </div>
 
         {/* Nav */}

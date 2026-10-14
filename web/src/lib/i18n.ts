@@ -58,6 +58,7 @@ const en: Dict = {
   "nav.progress": "Daily Progress",
   "nav.payments": "Payments",
   "nav.equipment": "Equipment",
+  "nav.safety": "Safety Check",
   "nav.safety": "Safety",
 
   // Dashboard
@@ -281,6 +282,7 @@ const kn: Dict = {
   "nav.progress": "ದೈನಂದಿನ ಪ್ರಗತಿ",
   "nav.payments": "ಪಾವತಿಗಳು",
   "nav.equipment": "ಉಪಕರಣಗಳು",
+  "nav.safety": "ಸುರಕ್ಷತಾ ತಪಾಸಣೆ",
   "nav.safety": "ಸುರಕ್ಷತೆ",
 
   // Dashboard

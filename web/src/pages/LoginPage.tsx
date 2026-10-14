@@ -36,9 +36,18 @@ export default function LoginPage() {
     setSubmitting(true);
 
     if (mode === "login") {
-      const { error } = await signIn(email, password);
+      const { error, profile } = await signIn(email, password);
       if (error) {
         toast.error(t("auth.invalidCredentials", language));
+        setSubmitting(false);
+        return;
+      }
+      // Admin accounts bypass role check — they can always log in
+      if (profile && profile.role !== "admin" && profile.role !== role) {
+        toast.error(
+          `This account is registered as "${profile.role}". Please select "${profile.role}" to log in.`,
+          { duration: 5000 }
+        );
         setSubmitting(false);
         return;
       }
@@ -169,33 +178,41 @@ export default function LoginPage() {
                     />
                   </div>
                 </div>
-
-                <div className="space-y-1.5">
-                  <Label>{t("auth.selectRole", language)}</Label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {ROLES.map((r) => {
-                      const Icon = r.icon;
-                      return (
-                        <button
-                          key={r.value}
-                          type="button"
-                          onClick={() => setRole(r.value)}
-                          className={cn(
-                            "flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs font-medium transition-all",
-                            role === r.value
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-border text-muted-foreground hover:border-primary/50",
-                          )}
-                        >
-                          <Icon className="h-5 w-5" />
-                          {t(r.labelKey, language)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
               </>
             )}
+
+            {/* Role selector — shown on BOTH login and signup */}
+            <div className="space-y-1.5">
+              <Label>
+                {mode === "login" ? "Login as" : t("auth.selectRole", language)}
+              </Label>
+              <div className="grid grid-cols-3 gap-2">
+                {ROLES.map((r) => {
+                  const Icon = r.icon;
+                  return (
+                    <button
+                      key={r.value}
+                      type="button"
+                      onClick={() => setRole(r.value)}
+                      className={cn(
+                        "flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs font-medium transition-all",
+                        role === r.value
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border text-muted-foreground hover:border-primary/50",
+                      )}
+                    >
+                      <Icon className="h-5 w-5" />
+                      {t(r.labelKey, language)}
+                    </button>
+                  );
+                })}
+              </div>
+              {mode === "login" && (
+                <p className="text-xs text-muted-foreground pt-0.5">
+                  Select the same role you chose when you signed up.
+                </p>
+              )}
+            </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="email">{t("auth.email", language)}</Label>

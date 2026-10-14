@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.rork.nirman.data.AttendanceRecord
+import com.rork.nirman.data.ConstructionCatalog
 import com.rork.nirman.data.DailyProgress
 import com.rork.nirman.data.Expense
 import com.rork.nirman.data.Issue
@@ -39,6 +40,8 @@ import com.rork.nirman.data.MaterialRequest
 import com.rork.nirman.data.Photo
 import com.rork.nirman.data.Task
 import com.rork.nirman.data.Worker
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import com.rork.nirman.ui.util.formatDate
 import com.rork.nirman.ui.util.formatINR
 import com.rork.nirman.ui.util.todayISO
@@ -133,6 +136,7 @@ fun ProjectDetailScreen(
                     onApprove = { id, status -> viewModel.updateMaterialRequestStatus(id, status, projectId) },
                     onAdd = { showAddMaterial = true },
                     onRequest = { showAddMaterialRequest = true },
+                    onPopulateDefaults = { viewModel.populateRealTimeMaterials(projectId) },
                 )
                 2 -> LabourTab(
                     workers = workers,
@@ -479,6 +483,7 @@ private fun MaterialsTab(
     onApprove: (String, String) -> Unit,
     onAdd: () -> Unit,
     onRequest: () -> Unit,
+    onPopulateDefaults: (() -> Unit)? = null,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -492,7 +497,10 @@ private fun MaterialsTab(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Materials (${materials.size})", fontWeight = FontWeight.SemiBold)
-                Row {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (materials.isEmpty() && canEdit && onPopulateDefaults != null) {
+                        TextButton(onClick = onPopulateDefaults) { Text("⚡ Populate") }
+                    }
                     if (canRequest) TextButton(onClick = onRequest) { Text("+ Request") }
                     if (canEdit) TextButton(onClick = onAdd) { Text("+ Add") }
                 }
@@ -851,20 +859,35 @@ private fun AddMaterialRequestDialog(onDismiss: () -> Unit, onAdd: (String, Doub
 
 @Composable
 private fun AddWorkerDialog(onDismiss: () -> Unit, onAdd: (String, String?, String?, Double) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var skill by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(ConstructionCatalog.REAL_TIME_WORKERS[1].roleName) }
+    var skill by remember { mutableStateOf(ConstructionCatalog.REAL_TIME_WORKERS[1].skill) }
     var phone by remember { mutableStateOf("") }
-    var wage by remember { mutableStateOf("500") }
+    var wage by remember { mutableStateOf(ConstructionCatalog.REAL_TIME_WORKERS[1].dailyWage.toInt().toString()) }
     var submitted by remember { mutableStateOf(false) }
     val nameError = submitted && name.isBlank()
     val phoneError = submitted && phone.isNotBlank() && !phone.matches(Regex("^[6-9]\\d{9}$"))
     val wageError = submitted && (wage.toDoubleOrNull() ?: 0.0) <= 0.0
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Worker") },
+        title = { Text("Add Worker (Trade & Wage)") },
         text = {
             Column {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name *") }, modifier = Modifier.fillMaxWidth(), singleLine = true, isError = nameError)
+                Text("Real-Time Trade & Wage Benchmarks:", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    items(ConstructionCatalog.REAL_TIME_WORKERS) { w ->
+                        AssistChip(
+                            onClick = {
+                                name = w.roleName
+                                skill = w.skill
+                                wage = w.dailyWage.toInt().toString()
+                            },
+                            label = { Text("${w.roleName.split(" ")[0]} ₹${w.dailyWage.toInt()}", fontSize = 10.sp) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name / Role *") }, modifier = Modifier.fillMaxWidth(), singleLine = true, isError = nameError)
                 if (nameError) Text("Name is required", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(value = skill, onValueChange = { skill = it }, label = { Text("Skill") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -872,7 +895,7 @@ private fun AddWorkerDialog(onDismiss: () -> Unit, onAdd: (String, String?, Stri
                 OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth(), singleLine = true, isError = phoneError)
                 if (phoneError) Text("Enter valid 10-digit Indian mobile number", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(value = wage, onValueChange = { wage = it }, label = { Text("Daily Wage (₹)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, isError = wageError)
+                OutlinedTextField(value = wage, onValueChange = { wage = it }, label = { Text("Daily Wage (₹) *") }, modifier = Modifier.fillMaxWidth(), singleLine = true, isError = wageError)
                 if (wageError) Text("Wage must be greater than 0", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
             }
         },
@@ -891,20 +914,38 @@ private fun AddWorkerDialog(onDismiss: () -> Unit, onAdd: (String, String?, Stri
 
 @Composable
 private fun AddMaterialDialog(onDismiss: () -> Unit, onAdd: (String, String?, String, Double, Double) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("") }
-    var unit by remember { mutableStateOf("bag") }
-    var cost by remember { mutableStateOf("") }
-    var gst by remember { mutableStateOf("18") }
+    val firstMat = ConstructionCatalog.REAL_TIME_MATERIALS[0]
+    var name by remember { mutableStateOf(firstMat.name) }
+    var category by remember { mutableStateOf(firstMat.category) }
+    var unit by remember { mutableStateOf(firstMat.unit) }
+    var cost by remember { mutableStateOf(firstMat.unitCost.toInt().toString()) }
+    var gst by remember { mutableStateOf(firstMat.gstPercent.toInt().toString()) }
     var submitted by remember { mutableStateOf(false) }
     val nameError = submitted && name.isBlank()
     val costError = submitted && (cost.toDoubleOrNull() ?: 0.0) <= 0.0
     val gstError = submitted && (gst.toDoubleOrNull() ?: -1.0) !in 0.0..28.0
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Material") },
+        title = { Text("Add Material (Market Rates)") },
         text = {
             Column {
+                Text("Select Live Market Preset:", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    items(ConstructionCatalog.REAL_TIME_MATERIALS) { m ->
+                        AssistChip(
+                            onClick = {
+                                name = m.name
+                                category = m.category
+                                unit = m.unit
+                                cost = if (m.unitCost % 1.0 == 0.0) m.unitCost.toInt().toString() else m.unitCost.toString()
+                                gst = m.gstPercent.toInt().toString()
+                            },
+                            label = { Text("${m.name.split(" ")[0]} ₹${m.unitCost.toInt()}", fontSize = 10.sp) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name *") }, modifier = Modifier.fillMaxWidth(), singleLine = true, isError = nameError)
                 if (nameError) Text("Name is required", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 Spacer(Modifier.height(8.dp))
@@ -934,18 +975,35 @@ private fun AddMaterialDialog(onDismiss: () -> Unit, onAdd: (String, String?, St
 
 @Composable
 private fun AddExpenseDialog(onDismiss: () -> Unit, onAdd: (String, String?, Double, Double) -> Unit) {
-    var category by remember { mutableStateOf("material") }
-    var description by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("") }
-    var gst by remember { mutableStateOf("18") }
+    val firstExp = ConstructionCatalog.REAL_TIME_EXPENSES[0]
+    var category by remember { mutableStateOf(firstExp.category) }
+    var description by remember { mutableStateOf(firstExp.title) }
+    var amount by remember { mutableStateOf(firstExp.amount.toInt().toString()) }
+    var gst by remember { mutableStateOf(firstExp.gstPercent.toInt().toString()) }
     var submitted by remember { mutableStateOf(false) }
     val amountError = submitted && (amount.toDoubleOrNull() ?: 0.0) <= 0.0
     val gstError = submitted && (gst.toDoubleOrNull() ?: -1.0) !in 0.0..28.0
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Expense") },
+        title = { Text("Add Expense (Presets)") },
         text = {
             Column {
+                Text("Select Common Site Expense:", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    items(ConstructionCatalog.REAL_TIME_EXPENSES) { e ->
+                        AssistChip(
+                            onClick = {
+                                category = e.category
+                                description = e.title
+                                amount = e.amount.toInt().toString()
+                                gst = e.gstPercent.toInt().toString()
+                            },
+                            label = { Text("${e.title.split(" ")[0]} ₹${e.amount.toInt()}", fontSize = 10.sp) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(value = category, onValueChange = { category = it }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Description") }, modifier = Modifier.fillMaxWidth(), singleLine = true)

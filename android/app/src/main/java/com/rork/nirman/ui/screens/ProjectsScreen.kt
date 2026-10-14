@@ -44,7 +44,7 @@ fun ProjectsScreen(
     var showCreateDialog by remember { mutableStateOf(false) }
     var statusMenuExpanded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { viewModel.loadProjects() }
+    LaunchedEffect(user?.id) { if (user != null) viewModel.loadProjects() }
 
     val canCreate = user?.role == "admin" || user?.role == "engineer"
     val statuses = listOf("all", "planning", "active", "on_hold", "completed", "cancelled")

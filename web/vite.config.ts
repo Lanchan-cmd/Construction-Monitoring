@@ -1,18 +1,21 @@
 import path from "path";
 
 import react from "@vitejs/plugin-react";
+import basicSsl from "@vitejs/plugin-basic-ssl";
 import { defineConfig } from "vite";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  base: mode === "production" ? "/Construction-Monitoring/" : "/",
   server: {
     host: "::",
     port: 8080,
+    https: true,
     hmr: {
       overlay: false,
     },
   },
-  plugins: [react()],
+  plugins: [react(), basicSsl()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

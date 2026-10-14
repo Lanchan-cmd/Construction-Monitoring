@@ -9,7 +9,9 @@ import {
   ArrowLeft, Building2, MapPin, IndianRupee, Calendar, TrendingUp,
   Package, HardHat, Receipt, ListTodo, AlertTriangle, Images,
   Construction, Plus, Check, X, ShieldCheck, Camera, CameraOff,
+  Sparkles, Users,
 } from "lucide-react";
+import { REAL_TIME_MATERIALS, REAL_TIME_WORKERS, REAL_TIME_EXPENSES } from "@/lib/constructionCatalog";
 import { supabase, PHOTOS_BUCKET } from "@/lib/supabase";
 import { useAuth, usePrefs } from "@/lib/auth";
 import { t } from "@/lib/i18n";
@@ -187,22 +189,22 @@ function OverviewTab({ project }: { project: Project }) {
 
   const taskData = ["todo", "in_progress", "review", "done"].map((s) => ({
     name: s.replace("_", " "),
-    value: tasks.filter((t: any) => t.status === s).length,
+    value: tasks.filter((t) => t.status === s).length,
   })).filter((d) => d.value > 0);
 
   const attendanceData = ["present", "half_day", "absent", "leave"].map((s) => ({
     name: s.replace("_", " "),
-    count: attendance.filter((a: any) => a.status === s).length,
+    count: attendance.filter((a) => a.status === s).length,
   }));
 
   const expenseByCategory = Object.entries(
-    expenses.reduce((acc: Record<string, number>, e: any) => {
+    expenses.reduce((acc: Record<string, number>, e) => {
       acc[e.category] = (acc[e.category] ?? 0) + e.total_amount;
       return acc;
     }, {})
   ).map(([name, value]) => ({ name, value }));
 
-  const progressData = progress.map((p: any) => ({
+  const progressData = progress.map((p) => ({
     date: p.log_date?.slice(5),
     progress: p.progress_percent,
   }));
@@ -332,6 +334,7 @@ function MaterialsTab({ projectId, canEdit }: { projectId: string; canEdit: bool
   const { language } = usePrefs();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [populating, setPopulating] = useState(false);
 
   const { data: materials = [] } = useQuery({
     queryKey: ["materials", projectId],
@@ -360,13 +363,56 @@ function MaterialsTab({ projectId, canEdit }: { projectId: string; canEdit: bool
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const handlePopulateRealTime = async () => {
+    if (!canEdit) return;
+    setPopulating(true);
+    try {
+      const rows = REAL_TIME_MATERIALS.map((m) => ({
+        project_id: projectId,
+        name: m.name,
+        category: m.category,
+        unit: m.unit,
+        unit_cost: m.unitCost,
+        gst_percent: m.gstPercent,
+      }));
+      const { error } = await supabase.from("materials").insert(rows);
+      if (error) throw error;
+      toast.success(`Added ${rows.length} real-time construction materials`);
+      queryClient.invalidateQueries({ queryKey: ["materials", projectId] });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to populate materials");
+    } finally {
+      setPopulating(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Material catalog */}
       <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">{t("nav.materials", language)}</h3>
-          {canEdit && <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-1.5"><Plus className="h-3.5 w-3.5" />{t("material.add", language)}</Button>}
+        <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold">{t("nav.materials", language)}</h3>
+            <p className="text-xs text-muted-foreground">Market rates benchmarked to live South India / Karnataka pricing</p>
+          </div>
+          {canEdit && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handlePopulateRealTime}
+                disabled={populating}
+                className="gap-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {populating ? "Populating..." : "Populate Real-Time Catalog"}
+              </Button>
+              <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-1.5">
+                <Plus className="h-3.5 w-3.5" />
+                {t("material.add", language)}
+              </Button>
+            </div>
+          )}
         </div>
         {materials.length === 0 ? (
           <EmptyState icon={Package} title={t("common.noData", language)} />
@@ -435,12 +481,26 @@ function MaterialsTab({ projectId, canEdit }: { projectId: string; canEdit: bool
 
 function MaterialFormDialog({ open, onOpenChange, projectId }: { open: boolean; onOpenChange: (o: boolean) => void; projectId: string }) {
   const { language } = usePrefs();
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("");
-  const [unit, setUnit] = useState("bag");
-  const [unitCost, setUnitCost] = useState("0");
-  const [gstPercent, setGstPercent] = useState("18");
+  const queryClient = useQueryClient();
+  const [selectedPreset, setSelectedPreset] = useState<string>("custom");
+  const [name, setName] = useState(REAL_TIME_MATERIALS[0].name);
+  const [category, setCategory] = useState(REAL_TIME_MATERIALS[0].category);
+  const [unit, setUnit] = useState(REAL_TIME_MATERIALS[0].unit);
+  const [unitCost, setUnitCost] = useState(REAL_TIME_MATERIALS[0].unitCost.toString());
+  const [gstPercent, setGstPercent] = useState(REAL_TIME_MATERIALS[0].gstPercent.toString());
   const [saving, setSaving] = useState(false);
+
+  const handlePresetSelect = (presetName: string) => {
+    setSelectedPreset(presetName);
+    const found = REAL_TIME_MATERIALS.find((m) => m.name === presetName);
+    if (found) {
+      setName(found.name);
+      setCategory(found.category);
+      setUnit(found.unit);
+      setUnitCost(found.unitCost.toString());
+      setGstPercent(found.gstPercent.toString());
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -451,6 +511,7 @@ function MaterialFormDialog({ open, onOpenChange, projectId }: { open: boolean; 
     });
     if (error) { toast.error(error.message); setSaving(false); return; }
     toast.success("Material added");
+    queryClient.invalidateQueries({ queryKey: ["materials", projectId] });
     onOpenChange(false);
     setSaving(false);
   };
@@ -460,6 +521,24 @@ function MaterialFormDialog({ open, onOpenChange, projectId }: { open: boolean; 
       <DialogContent className="sm:max-w-md">
         <DialogHeader><DialogTitle>{t("material.add", language)}</DialogTitle></DialogHeader>
         <form onSubmit={handleSave} className="space-y-3">
+          {/* Preset quick picker */}
+          <div className="space-y-1.5 rounded-lg border bg-amber-50/50 p-2.5 dark:bg-amber-950/20">
+            <Label className="text-xs font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+              Real-Time Market Rate Preset
+            </Label>
+            <Select value={selectedPreset} onValueChange={handlePresetSelect}>
+              <SelectTrigger className="bg-background text-xs"><SelectValue placeholder="Choose a real-time material" /></SelectTrigger>
+              <SelectContent className="max-h-60">
+                {REAL_TIME_MATERIALS.map((m) => (
+                  <SelectItem key={m.name} value={m.name} className="text-xs">
+                    {m.name} — ₹{m.unitCost}/{m.unit} (GST {m.gstPercent}%)
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="space-y-1.5"><Label>{t("material.name", language)} *</Label><Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Cement" /></div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label>{t("material.category", language)}</Label><Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Construction" /></div>
@@ -482,6 +561,7 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
   const { language } = usePrefs();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [populatingLabour, setPopulatingLabour] = useState(false);
   const [attendanceDate, setAttendanceDate] = useState(todayISO());
 
   const { data: workers = [] } = useQuery({
@@ -518,12 +598,54 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
     toast.success("Attendance marked");
   };
 
+  const handlePopulateLabour = async () => {
+    if (!canEdit) return;
+    setPopulatingLabour(true);
+    try {
+      const rows = REAL_TIME_WORKERS.map((w) => ({
+        project_id: projectId,
+        full_name: w.roleName,
+        skill: w.skill,
+        daily_wage: w.dailyWage,
+        is_active: true,
+      }));
+      const { error } = await supabase.from("workers").insert(rows);
+      if (error) throw error;
+      toast.success(`Populated ${rows.length} standard workforce roles`);
+      queryClient.invalidateQueries({ queryKey: ["workers", projectId] });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to populate workforce");
+    } finally {
+      setPopulatingLabour(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">{t("nav.labour", language)}</h3>
-          {canEdit && <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-1.5"><Plus className="h-3.5 w-3.5" />{t("labour.add", language)}</Button>}
+        <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold">{t("nav.labour", language)}</h3>
+            <p className="text-xs text-muted-foreground">Standard daily wage rates for skilled and unskilled construction labour</p>
+          </div>
+          {canEdit && (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handlePopulateLabour}
+                disabled={populatingLabour}
+                className="gap-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+              >
+                <Users className="h-3.5 w-3.5" />
+                {populatingLabour ? "Populating..." : "Populate Standard Workforce"}
+              </Button>
+              <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-1.5">
+                <Plus className="h-3.5 w-3.5" />
+                {t("labour.add", language)}
+              </Button>
+            </div>
+          )}
         </div>
         {workers.length === 0 ? (
           <EmptyState icon={HardHat} title={t("common.noData", language)} />
@@ -601,11 +723,23 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
 
 function WorkerFormDialog({ open, onOpenChange, projectId }: { open: boolean; onOpenChange: (o: boolean) => void; projectId: string }) {
   const { language } = usePrefs();
-  const [fullName, setFullName] = useState("");
-  const [skill, setSkill] = useState("");
+  const queryClient = useQueryClient();
+  const [selectedPreset, setSelectedPreset] = useState<string>("custom");
+  const [fullName, setFullName] = useState(REAL_TIME_WORKERS[1].roleName);
+  const [skill, setSkill] = useState(REAL_TIME_WORKERS[1].skill);
   const [phone, setPhone] = useState("");
-  const [dailyWage, setDailyWage] = useState("500");
+  const [dailyWage, setDailyWage] = useState(REAL_TIME_WORKERS[1].dailyWage.toString());
   const [saving, setSaving] = useState(false);
+
+  const handlePresetSelect = (roleName: string) => {
+    setSelectedPreset(roleName);
+    const found = REAL_TIME_WORKERS.find((w) => w.roleName === roleName);
+    if (found) {
+      setFullName(found.roleName);
+      setSkill(found.skill);
+      setDailyWage(found.dailyWage.toString());
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -616,6 +750,7 @@ function WorkerFormDialog({ open, onOpenChange, projectId }: { open: boolean; on
     });
     if (error) { toast.error(error.message); setSaving(false); return; }
     toast.success("Worker added");
+    queryClient.invalidateQueries({ queryKey: ["workers", projectId] });
     onOpenChange(false);
     setSaving(false);
   };
@@ -625,6 +760,24 @@ function WorkerFormDialog({ open, onOpenChange, projectId }: { open: boolean; on
       <DialogContent className="sm:max-w-md">
         <DialogHeader><DialogTitle>{t("labour.add", language)}</DialogTitle></DialogHeader>
         <form onSubmit={handleSave} className="space-y-3">
+          {/* Preset quick picker */}
+          <div className="space-y-1.5 rounded-lg border bg-amber-50/50 p-2.5 dark:bg-amber-950/20">
+            <Label className="text-xs font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+              Standard Trade & Wage Benchmark
+            </Label>
+            <Select value={selectedPreset} onValueChange={handlePresetSelect}>
+              <SelectTrigger className="bg-background text-xs"><SelectValue placeholder="Choose a trade role" /></SelectTrigger>
+              <SelectContent className="max-h-60">
+                {REAL_TIME_WORKERS.map((w) => (
+                  <SelectItem key={w.roleName} value={w.roleName} className="text-xs">
+                    {w.roleName} — ₹{w.dailyWage}/day
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="space-y-1.5"><Label>{t("labour.name", language)} *</Label><Input value={fullName} onChange={(e) => setFullName(e.target.value)} required /></div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label>{t("labour.skill", language)}</Label><Input value={skill} onChange={(e) => setSkill(e.target.value)} placeholder="Mason" /></div>
@@ -703,6 +856,8 @@ function ExpensesTab({ projectId, canEdit, session }: { projectId: string; canEd
 
 function ExpenseFormDialog({ open, onOpenChange, projectId, userId }: { open: boolean; onOpenChange: (o: boolean) => void; projectId: string; userId: string }) {
   const { language } = usePrefs();
+  const queryClient = useQueryClient();
+  const [selectedPreset, setSelectedPreset] = useState<string>("custom");
   const [category, setCategory] = useState("material");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("0");
@@ -715,6 +870,17 @@ function ExpenseFormDialog({ open, onOpenChange, projectId, userId }: { open: bo
   const gstAmt = calcGST(amt, gst);
   const total = calcTotalWithGST(amt, gst);
 
+  const handlePresetSelect = (title: string) => {
+    setSelectedPreset(title);
+    const found = REAL_TIME_EXPENSES.find((e) => e.title === title);
+    if (found) {
+      setCategory(found.category);
+      setDescription(found.description);
+      setAmount(found.amount.toString());
+      setGstPercent(found.gstPercent.toString());
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -725,6 +891,7 @@ function ExpenseFormDialog({ open, onOpenChange, projectId, userId }: { open: bo
     });
     if (error) { toast.error(error.message); setSaving(false); return; }
     toast.success("Expense added");
+    queryClient.invalidateQueries({ queryKey: ["expenses", projectId] });
     onOpenChange(false);
     setSaving(false);
   };
@@ -734,6 +901,24 @@ function ExpenseFormDialog({ open, onOpenChange, projectId, userId }: { open: bo
       <DialogContent className="sm:max-w-md">
         <DialogHeader><DialogTitle>{t("expense.add", language)}</DialogTitle></DialogHeader>
         <form onSubmit={handleSave} className="space-y-3">
+          {/* Preset quick picker */}
+          <div className="space-y-1.5 rounded-lg border bg-amber-50/50 p-2.5 dark:bg-amber-950/20">
+            <Label className="text-xs font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+              Real-Time Expense Benchmark Preset
+            </Label>
+            <Select value={selectedPreset} onValueChange={handlePresetSelect}>
+              <SelectTrigger className="bg-background text-xs"><SelectValue placeholder="Choose an expense preset" /></SelectTrigger>
+              <SelectContent className="max-h-60">
+                {REAL_TIME_EXPENSES.map((e) => (
+                  <SelectItem key={e.title} value={e.title} className="text-xs">
+                    {e.title} — ₹{e.amount.toLocaleString("en-IN")} ({e.category})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label>{t("expense.category", language)}</Label>
               <Select value={category} onValueChange={setCategory}>
@@ -1140,6 +1325,18 @@ function PhotosTab({ projectId, session }: { projectId: string; session: { user:
 
 // ---------- Safety tab ----------
 
+const ROBOFLOW_WORKFLOW_URL = "https://serverless.roboflow.com/poornachandra-k-k/workflows/construction-site-safety-3dbwu";
+const ROBOFLOW_API_KEY = import.meta.env.VITE_ROBOFLOW_API_KEY as string;
+
+const PPE_CLASS_MAP: Record<string, SafetyItem> = {
+  helmet: "helmet", "hard-hat": "helmet", hardhat: "helmet", "safety helmet": "helmet", "hard hat": "helmet",
+  boots: "boots", "safety-boots": "boots", "safety boots": "boots", shoe: "boots",
+  harness: "harness", "safety-harness": "harness", "safety harness": "harness",
+  gloves: "gloves", "safety-gloves": "gloves", "safety gloves": "gloves",
+  vest: "vest", "safety-vest": "vest", "safety vest": "vest", "hi-vis": "vest", "high-visibility": "vest",
+  goggles: "goggles", "safety-glasses": "goggles", glasses: "goggles",
+};
+
 const SAFETY_ITEMS = ["helmet", "boots", "harness", "gloves", "vest", "goggles"] as const;
 type SafetyItem = typeof SAFETY_ITEMS[number];
 
@@ -1150,10 +1347,19 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
   const [notes, setNotes] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState("");
   const [saving, setSaving] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const videoCallbackRef = (el: HTMLVideoElement | null) => {
+    if (el && streamRef.current) {
+      el.srcObject = streamRef.current;
+      el.play().catch(() => {});
+    }
+  };
 
   const { data: workers = [] } = useQuery({
     queryKey: ["workers", projectId],
@@ -1171,39 +1377,105 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     },
   });
 
+  // Sends base64 frame directly to Roboflow — no storage upload needed
+  const runDetection = async () => {
+    const videoEl = document.querySelector<HTMLVideoElement>("video[data-safety]");
+    const canvas = canvasRef.current;
+    if (!videoEl || !canvas) return;
+    const w = videoEl.videoWidth || videoEl.clientWidth;
+    const h = videoEl.videoHeight || videoEl.clientHeight;
+    if (!w || !h) return;
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d")!.drawImage(videoEl, 0, 0, w, h);
+    const base64 = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
+    try {
+      const res = await fetch(ROBOFLOW_WORKFLOW_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${ROBOFLOW_API_KEY}` },
+        body: JSON.stringify({ inputs: { image: { type: "base64", value: base64 } } }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      const predictions: { class?: string }[] =
+        json?.outputs?.[0]?.predictions?.predictions ??
+        json?.outputs?.predictions?.predictions ??
+        json?.predictions ?? [];
+      const detected = new Set<SafetyItem>();
+      for (const pred of predictions) {
+        const label = (pred.class ?? "").toLowerCase();
+        const mapped = PPE_CLASS_MAP[label] ?? PPE_CLASS_MAP[pred.class ?? ""];
+        if (mapped) detected.add(mapped);
+      }
+      if (detected.size > 0) {
+        setChecks((prev) => {
+          const next = { ...prev };
+          detected.forEach((k) => { next[k] = true; });
+          return next;
+        });
+        setScanStatus("✓ Detected: " + [...detected].join(", "));
+      } else {
+        setScanStatus("No PPE detected — adjust position...");
+      }
+    } catch (e: unknown) {
+      setScanStatus("Scan error: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   const startCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error(location.protocol === "http:" ? "Camera requires HTTPS — use localhost or https://." : "Camera not supported.");
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
       setCameraOpen(true);
-    } catch {
-      toast.error("Camera access denied");
+      setScanning(true);
+      setScanStatus("Scanning for PPE...");
+      intervalRef.current = setInterval(runDetection, 3000);
+    } catch (err: unknown) {
+      const name = err instanceof Error ? err.name : "";
+      const msg = name === "NotAllowedError" ? "Camera permission denied."
+        : name === "NotFoundError" ? "No camera found."
+        : name === "NotReadableError" ? "Camera in use by another app."
+        : "Camera error: " + (err instanceof Error ? err.message : String(err));
+      toast.error(msg, { duration: 6000 });
     }
   };
 
   const stopCamera = () => {
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     setCameraOpen(false);
+    setScanning(false);
+    setScanStatus("");
   };
 
-  const capturePhoto = () => {
-    if (!videoRef.current || !canvasRef.current) return;
-    const ctx = canvasRef.current.getContext("2d")!;
-    canvasRef.current.width = videoRef.current.videoWidth;
-    canvasRef.current.height = videoRef.current.videoHeight;
-    ctx.drawImage(videoRef.current, 0, 0);
-    setCapturedImage(canvasRef.current.toDataURL("image/jpeg", 0.8));
+  const captureAndClose = () => {
+    const videoEl = document.querySelector<HTMLVideoElement>("video[data-safety]");
+    const canvas = canvasRef.current;
+    if (!canvas || !videoEl) return;
+    const w = videoEl.videoWidth || videoEl.clientWidth;
+    const h = videoEl.videoHeight || videoEl.clientHeight;
+    if (!w || !h) { toast.error("Camera not ready."); return; }
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d")!.drawImage(videoEl, 0, 0, w, h);
+    setCapturedImage(canvas.toDataURL("image/jpeg", 0.85));
     stopCamera();
   };
 
   const handleSave = async () => {
     if (!selectedWorker) { toast.error("Select a worker"); return; }
+    const missing = SAFETY_ITEMS.filter((k) => !checks[k]);
+    if (missing.length > 0) {
+      toast.error(`⚠️ Missing PPE: ${missing.join(", ")} — worker must wear all required safety items.`, { duration: 7000 });
+      return;
+    }
     setSaving(true);
     let photoPath: string | null = null;
     let publicUrl: string | null = null;
-
+    // Only the final captured photo is stored — not scan frames
     if (capturedImage) {
       const blob = await (await fetch(capturedImage)).blob();
       const path = `safety/${projectId}/${Date.now()}.jpg`;
@@ -1213,38 +1485,31 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
         publicUrl = supabase.storage.from("site-photos").getPublicUrl(path).data.publicUrl;
       }
     }
-
     const { error } = await supabase.from("safety_checklists").upsert({
-      project_id: projectId,
-      worker_id: selectedWorker.id,
+      project_id: projectId, worker_id: selectedWorker.id,
       check_date: new Date().toISOString().slice(0, 10),
-      ...checks,
-      notes: notes || null,
-      photo_path: photoPath,
-      public_url: publicUrl,
-      recorded_by: session?.user.id ?? null,
+      ...checks, notes: notes || null, photo_path: photoPath,
+      public_url: publicUrl, recorded_by: session?.user.id ?? null,
     }, { onConflict: "worker_id,check_date" });
-
     if (error) { toast.error(error.message); setSaving(false); return; }
     toast.success("Safety check saved");
     queryClient.invalidateQueries({ queryKey: ["safety", projectId] });
     setSelectedWorker(null);
     setChecks({ helmet: false, boots: false, harness: false, gloves: false, vest: false, goggles: false });
-    setNotes("");
-    setCapturedImage(null);
-    setSaving(false);
+    setNotes(""); setCapturedImage(null); setSaving(false);
   };
 
   const allPassed = (c: SafetyChecklist) => SAFETY_ITEMS.every((k) => c[k]);
+  const detectedCount = Object.values(checks).filter(Boolean).length;
 
   return (
     <div className="space-y-6">
-      {/* Check form */}
       <Card>
         <CardContent className="p-5 space-y-4">
-          <h3 className="text-sm font-semibold flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-amber-500" />Daily Safety Check</h3>
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-amber-500" />Daily Safety Check
+          </h3>
 
-          {/* Worker selector */}
           <div className="space-y-1.5">
             <Label>Worker *</Label>
             <Select value={selectedWorker?.id ?? ""} onValueChange={(id) => setSelectedWorker(workers.find((w) => w.id === id) ?? null)}>
@@ -1253,35 +1518,53 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
             </Select>
           </div>
 
-          {/* Checklist items */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {SAFETY_ITEMS.map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setChecks((p) => ({ ...p, [item]: !p[item] }))}
-                className={`flex items-center gap-2 rounded-lg border p-3 text-sm font-medium transition-colors ${checks[item] ? "border-green-500 bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300" : "border-border bg-muted/30 text-muted-foreground"}`}
-              >
-                {checks[item] ? <Check className="h-4 w-4 text-green-500" /> : <X className="h-4 w-4 text-red-400" />}
-                {item.charAt(0).toUpperCase() + item.slice(1)}
-              </button>
-            ))}
+          <div>
+            <p className="mb-2 text-xs text-muted-foreground">
+              PPE auto-detected by camera ({detectedCount}/{SAFETY_ITEMS.length}) — tap to toggle manually
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {SAFETY_ITEMS.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setChecks((p) => ({ ...p, [item]: !p[item] }))}
+                  className={`flex items-center gap-2 rounded-lg border p-3 text-sm font-medium transition-all ${
+                    checks[item]
+                      ? "border-green-500 bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
+                      : "border-red-300 bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400"
+                  }`}
+                >
+                  {checks[item] ? <Check className="h-4 w-4 text-green-500" /> : <X className="h-4 w-4 text-red-400" />}
+                  {item.charAt(0).toUpperCase() + item.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Camera section */}
           <div className="space-y-2">
-            <Label>Live Camera Scan</Label>
+            <Label>Auto PPE Scan</Label>
             {!cameraOpen && !capturedImage && (
               <Button type="button" variant="outline" onClick={startCamera} className="gap-2 w-full">
-                <Camera className="h-4 w-4" />Open Camera
+                <Camera className="h-4 w-4" />Open Camera &amp; Scan
               </Button>
             )}
             {cameraOpen && (
               <div className="space-y-2">
-                <video ref={videoRef} autoPlay playsInline className="w-full rounded-lg border" />
+                <div className="relative">
+                  <video data-safety ref={videoCallbackRef} autoPlay playsInline muted className="w-full rounded-lg border bg-black" />
+                  {scanning && (
+                    <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/70 px-3 py-1.5 text-xs text-white">
+                      🔍 {scanStatus || "Scanning..."}
+                    </div>
+                  )}
+                </div>
                 <div className="flex gap-2">
-                  <Button type="button" onClick={capturePhoto} className="flex-1 gap-2"><Camera className="h-4 w-4" />Capture</Button>
-                  <Button type="button" variant="outline" onClick={stopCamera} className="gap-2"><CameraOff className="h-4 w-4" />Cancel</Button>
+                  <Button type="button" onClick={captureAndClose} className="flex-1 gap-2">
+                    <Camera className="h-4 w-4" />Capture &amp; Done
+                  </Button>
+                  <Button type="button" variant="outline" onClick={stopCamera} className="gap-2">
+                    <CameraOff className="h-4 w-4" />Cancel
+                  </Button>
                 </div>
               </div>
             )}
@@ -1302,12 +1585,14 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
           </div>
 
           <Button onClick={handleSave} disabled={saving || !selectedWorker} className="w-full gap-2">
-            <ShieldCheck className="h-4 w-4" />{saving ? "Saving..." : "Save Safety Check"}
+            <ShieldCheck className="h-4 w-4" />
+            {saving ? "Saving..." : detectedCount === SAFETY_ITEMS.length
+              ? "Save Safety Check ✓"
+              : `Save (${detectedCount}/${SAFETY_ITEMS.length} PPE detected)`}
           </Button>
         </CardContent>
       </Card>
 
-      {/* Today's checklist results */}
       <div>
         <h3 className="mb-3 text-sm font-semibold">Today's Safety Records</h3>
         {checklists.length === 0 ? (

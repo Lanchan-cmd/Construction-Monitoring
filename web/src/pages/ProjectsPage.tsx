@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Building2, Plus, Search, MapPin, IndianRupee, Calendar, ArrowLeft } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { useAuth, usePrefs } from "@/lib/auth";
+import { useAuth, usePrefs, useMyProjectIds } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { formatINR, formatINRCompact, formatDate, todayISO } from "@/lib/format";
 import type { Project, ProjectStatus, Profile } from "@/lib/types";
@@ -46,14 +46,22 @@ export default function ProjectsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
+  const { ids: myProjectIds, isAdmin } = useMyProjectIds();
 
   const { data: projects = [], isLoading } = useQuery({
-    queryKey: ["projects"],
+    queryKey: ["projects", profile?.role, profile?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("projects").select("*").order("created_at", { ascending: false });
+      let query = supabase.from("projects").select("*").order("created_at", { ascending: false });
+      // Non-admin users only see their assigned projects
+      if (!isAdmin && myProjectIds !== null) {
+        if (myProjectIds.length === 0) return [] as Project[];
+        query = query.in("id", myProjectIds);
+      }
+      const { data, error } = await query;
       if (error) throw error;
       return data as Project[];
     },
+    enabled: isAdmin || myProjectIds !== null,
   });
 
   const { data: engineers = [] } = useQuery({
@@ -238,7 +246,7 @@ function ProjectFormDialog({ open, onOpenChange, project, engineers, contractors
   const { language } = usePrefs();
   const [name, setName] = useState(project?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? "");
-  const [budget, setBudget] = useState(project?.budget?.toString() ?? "0");
+  const [budget, setBudget] = useState(project?.budget?.toString() ?? "4500000");
   const [gstPercent, setGstPercent] = useState(project?.gst_percent?.toString() ?? "18");
   const [status, setStatus] = useState<ProjectStatus>(project?.status ?? "planning");
   const [startDate, setStartDate] = useState(project?.start_date ?? todayISO());

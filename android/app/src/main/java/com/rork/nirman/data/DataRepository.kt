@@ -34,6 +34,28 @@ class DataRepository {
         emptyList()
     }
 
+    /**
+     * Returns only the projects visible to this user based on their role.
+     * - admin  → all projects
+     * - engineer  → projects where engineer_id = userId
+     * - contractor → projects where contractor_id = userId
+     * - owner / others → projects where created_by = userId
+     */
+    suspend fun getMyProjects(userId: String, role: String): List<Project> = try {
+        db.from("projects").select {
+            when (role) {
+                "admin" -> { /* no filter — admin sees all */ }
+                "engineer" -> filter { eq("engineer_id", userId) }
+                "contractor" -> filter { eq("contractor_id", userId) }
+                else -> filter { eq("created_by", userId) }
+            }
+            order("created_at", Order.DESCENDING)
+        }.decodeList()
+    } catch (e: Exception) {
+        Log.e("DataRepo", "getMyProjects: ${e.message}")
+        emptyList()
+    }
+
     suspend fun getProject(id: String): Project? = try {
         db.from("projects").select {
             filter { eq("id", id) }

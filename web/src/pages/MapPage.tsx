@@ -11,7 +11,7 @@ import { PageHeader, EmptyState } from "@/components/ui-widgets";
 import { Badge } from "@/components/ui/badge";
 
 // Fix Leaflet default icon paths broken by bundlers
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",

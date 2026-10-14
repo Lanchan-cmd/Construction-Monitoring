@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type { Profile, UserRole, Language } from "@/lib/types";
 
@@ -7,7 +8,7 @@ interface AuthState {
   session: Session | null;
   profile: Profile | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signIn: (email: string, password: string) => Promise<{ error: string | null; profile: Profile | null }>;
   signUp: (email: string, password: string, fullName: string, role: UserRole, phone?: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -32,7 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq("id", userId)
       .single();
     if (error) {
-      console.error("Failed to fetch profile:", error.message);
+      console.error("Failed to fetch profile:", error.message.replace(/[\r\n]/g, " "));
       return;
     }
     setProfile(data as Profile);
@@ -61,8 +62,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchProfile]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error?.message ?? null };
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: error.message, profile: null };
+    // Fetch profile so the caller can validate the role
+    const userId = data.user?.id;
+    if (!userId) return { error: null, profile: null };
+    const { data: prof } = await supabase.from("profiles").select("*").eq("id", userId).single();
+    return { error: null, profile: prof as Profile | null };
   }, []);
 
   const signUp = useCallback(
@@ -159,4 +165,37 @@ export function usePrefs(): PrefsState {
   const ctx = useContext(PrefsContext);
   if (!ctx) throw new Error("usePrefs must be used within PrefsProvider");
   return ctx;
+}
+
+// ---------- Scoped project IDs for the current user ----------
+//
+// Returns the list of project IDs the current user is allowed to see:
+//   - admin      → null  (caller should fetch all, no filter)
+//   - engineer   → projects where engineer_id = profile.id
+//   - contractor → projects where contractor_id = profile.id
+//   - owner      → projects where created_by = profile.id
+//
+// Use .in("project_id", ids) in every scoped query.
+// When the array is empty the user has no assigned projects.
+
+export function useMyProjectIds(): { ids: string[] | null; isAdmin: boolean; loading: boolean } {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
+
+  const { data: ids = [], isLoading } = useQuery({
+    queryKey: ["my-project-ids", profile?.role, profile?.id],
+    enabled: !!profile && !isAdmin,
+    queryFn: async () => {
+      if (!profile) return [];
+      let query = supabase.from("projects").select("id");
+      if (profile.role === "engineer")   query = query.eq("engineer_id",   profile.id);
+      if (profile.role === "contractor") query = query.eq("contractor_id", profile.id);
+      if (profile.role === "owner")      query = query.eq("created_by",    profile.id);
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data ?? []).map((p: { id: string }) => p.id);
+    },
+  });
+
+  return { ids: isAdmin ? null : ids, isAdmin, loading: !isAdmin && isLoading };
 }

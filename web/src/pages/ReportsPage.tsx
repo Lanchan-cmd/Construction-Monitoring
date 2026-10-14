@@ -5,7 +5,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { GradientBarChart, GradientAreaChart } from "@/components/charts";
 import { supabase } from "@/lib/supabase";
-import { useAuth, usePrefs } from "@/lib/auth";
+import { useAuth, usePrefs, useMyProjectIds } from "@/lib/auth";
 import { t } from "@/lib/i18n";
 import { formatINR, formatINRCompact, formatDate, todayISO } from "@/lib/format";
 import type { Project, Expense, DailyProgress, Worker, AttendanceRecord } from "@/lib/types";
@@ -22,14 +22,19 @@ import { toast } from "sonner";
 export default function ReportsPage() {
   const { profile } = useAuth();
   const { language } = usePrefs();
+  const { ids: myIds, isAdmin } = useMyProjectIds();
   const [projectId, setProjectId] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState(todayISO());
 
   const { data: projects = [] } = useQuery({
-    queryKey: ["projects"],
+    queryKey: ["projects", isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
-      const { data, error } = await supabase.from("projects").select("*").order("name");
+      let query = supabase.from("projects").select("*").order("name");
+      if (!isAdmin && myIds && myIds.length > 0) query = query.in("id", myIds);
+      else if (!isAdmin && myIds && myIds.length === 0) return [];
+      const { data, error } = await query;
       if (error) throw error;
       return data as Project[];
     },
@@ -37,10 +42,13 @@ export default function ReportsPage() {
 
   // Fetch expenses for the selected project
   const { data: expenses = [] } = useQuery({
-    queryKey: ["report-expenses", projectId, dateFrom, dateTo],
+    queryKey: ["report-expenses", projectId, dateFrom, dateTo, isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
+      if (!isAdmin && myIds?.length === 0) return [];
       let query = supabase.from("expenses").select("*").order("expense_date", { ascending: true });
       if (projectId !== "all") query = query.eq("project_id", projectId);
+      else if (!isAdmin && myIds && myIds.length > 0) query = query.in("project_id", myIds);
       if (dateFrom) query = query.gte("expense_date", dateFrom);
       if (dateTo) query = query.lte("expense_date", dateTo);
       const { data, error } = await query;
@@ -50,10 +58,13 @@ export default function ReportsPage() {
   });
 
   const { data: progress = [] } = useQuery({
-    queryKey: ["report-progress", projectId, dateFrom, dateTo],
+    queryKey: ["report-progress", projectId, dateFrom, dateTo, isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
+      if (!isAdmin && myIds?.length === 0) return [];
       let query = supabase.from("daily_progress").select("*").order("log_date", { ascending: true });
       if (projectId !== "all") query = query.eq("project_id", projectId);
+      else if (!isAdmin && myIds && myIds.length > 0) query = query.in("project_id", myIds);
       if (dateFrom) query = query.gte("log_date", dateFrom);
       if (dateTo) query = query.lte("log_date", dateTo);
       const { data, error } = await query;
@@ -63,10 +74,13 @@ export default function ReportsPage() {
   });
 
   const { data: workers = [] } = useQuery({
-    queryKey: ["report-workers", projectId],
+    queryKey: ["report-workers", projectId, isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
+      if (!isAdmin && myIds?.length === 0) return [];
       let query = supabase.from("workers").select("*");
       if (projectId !== "all") query = query.eq("project_id", projectId);
+      else if (!isAdmin && myIds && myIds.length > 0) query = query.in("project_id", myIds);
       const { data, error } = await query;
       if (error) throw error;
       return data as Worker[];
@@ -74,10 +88,13 @@ export default function ReportsPage() {
   });
 
   const { data: attendance = [] } = useQuery({
-    queryKey: ["report-attendance", projectId, dateFrom, dateTo],
+    queryKey: ["report-attendance", projectId, dateFrom, dateTo, isAdmin ? "admin" : myIds],
+    enabled: isAdmin || myIds !== null,
     queryFn: async () => {
+      if (!isAdmin && myIds?.length === 0) return [];
       let query = supabase.from("attendance").select("*");
       if (projectId !== "all") query = query.eq("project_id", projectId);
+      else if (!isAdmin && myIds && myIds.length > 0) query = query.in("project_id", myIds);
       if (dateFrom) query = query.gte("date", dateFrom);
       if (dateTo) query = query.lte("date", dateTo);
       const { data, error } = await query;
@@ -165,7 +182,7 @@ export default function ReportsPage() {
     });
 
     // Expenses table
-    const afterSummary = (doc as any).lastAutoTable.finalY + 10;
+    const afterSummary = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
     doc.setFontSize(12);
     doc.text("Expense Breakdown", 14, afterSummary);
     autoTable(doc, {

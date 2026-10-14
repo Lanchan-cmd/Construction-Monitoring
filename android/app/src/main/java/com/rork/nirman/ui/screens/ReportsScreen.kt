@@ -28,7 +28,7 @@ fun ReportsScreen(
     val user by viewModel.currentUser.collectAsState()
     val projects by viewModel.projects.collectAsState()
 
-    LaunchedEffect(Unit) { viewModel.loadProjects() }
+    LaunchedEffect(user?.id) { if (user != null) viewModel.loadProjects() }
 
     if (user?.role == "contractor") {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
