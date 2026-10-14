@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Component, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -126,11 +126,11 @@ const App = () => (
         <AuthProvider>
           <TooltipProvider>
             <Toaster richColors position="top-right" />
-            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <HashRouter>
               <ErrorBoundary>
                 <AppRoutes />
               </ErrorBoundary>
-            </BrowserRouter>
+            </HashRouter>
           </TooltipProvider>
         </AuthProvider>
       </PrefsProvider>
