@@ -90,7 +90,7 @@ fun ProjectDetailScreen(
         viewModel.loadAttendance(projectId, attendanceDate)
     }
 
-    val tabs = listOf("Overview", "Materials", "Labour", "Expenses", "Progress", "Tasks", "Issues", "Photos", "Safety")
+    val tabs = listOf("Overview", "Materials", "Labour", "Expenses", "Progress", "Tasks", "Issues", "Photos", "Safety", "Live View")
     val canEdit = user?.role == "admin" || user?.role == "engineer"
     val canAdd = user?.role == "admin" || user?.role == "engineer" || user?.role == "contractor"
 
@@ -191,6 +191,11 @@ fun ProjectDetailScreen(
                     currentUserId = user?.id ?: "",
                     canAdd = canAdd,
                     onAdd = { checklist -> viewModel.addSafetyChecklist(checklist) },
+                )
+                9 -> LiveViewTab(
+                    projectId = projectId,
+                    userRole = user?.role ?: "engineer",
+                    userName = user?.fullName ?: "User",
                 )
             }
         }
@@ -1401,6 +1406,142 @@ private fun SafetyCheckCard(checklist: SafetyChecklist, workers: List<Worker>) {
             if (!checklist.notes.isNullOrBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(checklist.notes, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live View Tab (Live WebRTC Video Stream from Site to Engineer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+fun LiveViewTab(
+    projectId: String,
+    userRole: String,
+    userName: String,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val isContractor = userRole == "contractor"
+    val isEngineer = userRole == "engineer" || userRole == "admin"
+    val liveUrl = "https://lanchan-cmd.github.io/Construction-Monitoring/#/projects/$projectId"
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isContractor) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+            ),
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (isContractor) "📹 Site Camera Broadcast" else "👁️ Remote Engineer Live View",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                    )
+                    SuggestionChip(
+                        onClick = {},
+                        label = { Text(userRole.uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    )
+                }
+
+                Text(
+                    text = if (isContractor)
+                        "As a Contractor, you can stream live high-definition video directly from your mobile camera to the Engineer in real time."
+                    else
+                        "As an Engineer, you can watch the Contractor's live site video feed, inspect construction work in real time, and verify progress without traveling.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Live Stream Room & Instructions",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("1", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Text(
+                        text = if (isContractor) "Contractor opens the Live Stream tab at the site and taps 'Start Site Camera'."
+                        else "Engineer clicks 'Connect to Site Camera' to watch the incoming live video.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("2", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Text(
+                        text = "Real-time WebRTC connects peer-to-peer with audio and video support.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Spacer(Modifier.height(4.dp))
+
+                Button(
+                    onClick = {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(liveUrl))
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (isContractor) "Start Camera Live Call" else "Open Live Site View")
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        val shareIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(
+                                android.content.Intent.EXTRA_TEXT,
+                                "Join Live Site Camera View for Project on Nirman App:\n$liveUrl"
+                            )
+                            type = "text/plain"
+                        }
+                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Share Live Site Link"))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Share Live Link to WhatsApp / Engineer")
+                }
             }
         }
     }

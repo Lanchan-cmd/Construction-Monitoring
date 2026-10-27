@@ -9,8 +9,9 @@ import {
   ArrowLeft, Building2, MapPin, IndianRupee, Calendar, TrendingUp,
   Package, HardHat, Receipt, ListTodo, AlertTriangle, Images,
   Construction, Plus, Check, X, ShieldCheck, Camera, CameraOff,
-  Sparkles, Users,
+  Sparkles, Users, Radio,
 } from "lucide-react";
+import { LiveStreamTab } from "@/components/LiveStreamTab";
 import { REAL_TIME_MATERIALS, REAL_TIME_WORKERS, REAL_TIME_EXPENSES } from "@/lib/constructionCatalog";
 import { supabase, PHOTOS_BUCKET } from "@/lib/supabase";
 import { useAuth, usePrefs } from "@/lib/auth";
@@ -48,6 +49,7 @@ const TABS = [
   { value: "issues", icon: AlertTriangle, labelKey: "nav.issues" },
   { value: "photos", icon: Images, labelKey: "nav.photos" },
   { value: "safety", icon: ShieldCheck, labelKey: "nav.safety" },
+  { value: "liveStream", icon: Radio, labelKey: "nav.liveStream" },
 ] as const;
 
 export default function ProjectDetailPage() {
@@ -153,6 +155,14 @@ export default function ProjectDetailPage() {
         <TabsContent value="issues"><IssuesTab projectId={project.id} session={session} /></TabsContent>
         <TabsContent value="photos"><PhotosTab projectId={project.id} session={session} /></TabsContent>
         <TabsContent value="safety"><SafetyTab projectId={project.id} session={session} /></TabsContent>
+        <TabsContent value="liveStream">
+          <LiveStreamTab
+            project={project}
+            currentUserId={profile?.id ?? session?.user?.id ?? ""}
+            currentUserRole={profile?.role ?? "engineer"}
+            currentUserName={profile?.full_name ?? session?.user?.email ?? "User"}
+          />
+        </TabsContent>
       </Tabs>
     </div>
   );
