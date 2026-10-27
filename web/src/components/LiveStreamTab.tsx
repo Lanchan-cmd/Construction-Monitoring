@@ -48,14 +48,19 @@ export function LiveStreamTab({
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [isEngineerAudioMuted, setIsEngineerAudioMuted] = useState(false);
+  const [isEngineerMicMuted, setIsEngineerMicMuted] = useState(false);
+  const [isContractorSpeakerMuted, setIsContractorSpeakerMuted] = useState(false);
+  const [isEngineerMicActive, setIsEngineerMicActive] = useState(false);
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
   const [activeViewersCount, setActiveViewersCount] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<string>("Idle");
 
-  // Video refs
+  // Video and audio refs
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const contractorAudioRef = useRef<HTMLAudioElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const engineerMicStreamRef = useRef<MediaStream | null>(null);
   const outgoingCallsRef = useRef<MediaConnection[]>([]);
   const incomingCallRef = useRef<MediaConnection | null>(null);
 
@@ -111,17 +116,32 @@ export function LiveStreamTab({
           return;
         }
 
-        // Answer call with contractor's live camera stream
+        // Answer call with contractor's live camera & mic stream
         call.answer(localStreamRef.current);
         outgoingCallsRef.current.push(call);
         setActiveViewersCount((c) => c + 1);
 
+        // Receive engineer's incoming microphone stream so contractor can hear engineer!
+        call.on("stream", (remoteEngineerStream) => {
+          if (contractorAudioRef.current) {
+            contractorAudioRef.current.srcObject = remoteEngineerStream;
+            contractorAudioRef.current.muted = false;
+            contractorAudioRef.current.volume = 1.0;
+            contractorAudioRef.current.play().catch((err) => {
+              console.warn("Could not autoplay engineer voice on contractor device:", err);
+            });
+          }
+        });
+
         call.on("close", () => {
           outgoingCallsRef.current = outgoingCallsRef.current.filter((c) => c !== call);
           setActiveViewersCount((c) => Math.max(0, c - 1));
+          if (contractorAudioRef.current) {
+            contractorAudioRef.current.srcObject = null;
+          }
         });
 
-        toast.info("Engineer joined live site feed");
+        toast.info("Engineer joined with 2-way audio! You can now talk to each other.");
       });
     }
 
@@ -131,6 +151,13 @@ export function LiveStreamTab({
       // Clean up peer & calls on unmount
       outgoingCallsRef.current.forEach((c) => c.close());
       incomingCallRef.current?.close();
+      if (engineerMicStreamRef.current) {
+        engineerMicStreamRef.current.getTracks().forEach((t) => t.stop());
+        engineerMicStreamRef.current = null;
+      }
+      if (contractorAudioRef.current) {
+        contractorAudioRef.current.srcObject = null;
+      }
       p.destroy();
       stopLocalStream();
     };
@@ -236,49 +263,66 @@ export function LiveStreamTab({
     }
   };
 
-  // Engineer connects to watch contractor's stream
-  const connectToSiteFeed = () => {
+  // Engineer connects to watch contractor's stream and talk via microphone
+  const connectToSiteFeed = async () => {
     if (!peer) {
       toast.error("Signaling peer not ready");
       return;
     }
 
-    setConnectionStatus("Connecting to contractor's site camera...");
+    setConnectionStatus("Activating microphone & connecting to site...");
 
-    // Create a dummy stream with both video and silent audio so WebRTC negotiates BOTH audio & video
+    // Create a dummy video track (receive-only video from engineer)
     const canvas = document.createElement("canvas");
     canvas.width = 2;
     canvas.height = 2;
     const dummyVideoTrack = canvas.captureStream(1).getVideoTracks()[0];
     const tracks: MediaStreamTrack[] = [dummyVideoTrack];
 
-    // Create a dummy silent audio track to ensure m=audio is present in the SDP offer
+    // Request Engineer's microphone for 2-way communication!
     try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (AudioCtx) {
-        const ctx = new AudioCtx();
-        const osc = ctx.createOscillator();
-        const dst = ctx.createMediaStreamDestination();
-        osc.connect(dst);
-        osc.start();
-        const dummyAudioTrack = dst.stream.getAudioTracks()[0];
-        if (dummyAudioTrack) {
-          dummyAudioTrack.enabled = false;
-          tracks.push(dummyAudioTrack);
-        }
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      engineerMicStreamRef.current = micStream;
+      const engineerAudioTrack = micStream.getAudioTracks()[0];
+      if (engineerAudioTrack) {
+        tracks.push(engineerAudioTrack);
+        setIsEngineerMicActive(true);
       }
-    } catch (e) {
-      console.warn("Could not create dummy audio track for negotiation:", e);
+    } catch (micErr) {
+      console.warn("Engineer microphone denied or unavailable, falling back to silent audio:", micErr);
+      // Fallback: dummy silent audio track so WebRTC still negotiates audio to hear contractor
+      try {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx();
+          const osc = ctx.createOscillator();
+          const dst = ctx.createMediaStreamDestination();
+          osc.connect(dst);
+          osc.start();
+          const dummyAudioTrack = dst.stream.getAudioTracks()[0];
+          if (dummyAudioTrack) {
+            dummyAudioTrack.enabled = false;
+            tracks.push(dummyAudioTrack);
+          }
+        }
+      } catch (e) {
+        console.warn("Could not create dummy audio track:", e);
+      }
     }
 
-    const dummyStream = new MediaStream(tracks);
-
-    const call = peer.call(broadcasterPeerId, dummyStream);
+    const engineerStream = new MediaStream(tracks);
+    const call = peer.call(broadcasterPeerId, engineerStream);
     incomingCallRef.current = call;
 
     call.on("stream", (remoteStream) => {
       setIsViewing(true);
-      setConnectionStatus("Connected — Live from Site (Audio & Video)");
+      setConnectionStatus("Connected — 2-Way Live Communication");
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = remoteStream;
         remoteVideoRef.current.muted = false;
@@ -292,7 +336,7 @@ export function LiveStreamTab({
           });
         }
       }
-      toast.success("Connected to live site! Contractor voice is enabled.");
+      toast.success("Connected! 2-way voice is active — you can both talk and hear each other.");
     });
 
     call.on("close", () => {
@@ -316,10 +360,16 @@ export function LiveStreamTab({
       incomingCallRef.current.close();
       incomingCallRef.current = null;
     }
+    if (engineerMicStreamRef.current) {
+      engineerMicStreamRef.current.getTracks().forEach((t) => t.stop());
+      engineerMicStreamRef.current = null;
+    }
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
     setIsViewing(false);
+    setIsEngineerMicActive(false);
+    setIsEngineerMicMuted(false);
     setNeedsAudioUnlock(false);
     setConnectionStatus("Disconnected");
   };
@@ -328,6 +378,24 @@ export function LiveStreamTab({
     if (remoteVideoRef.current) {
       remoteVideoRef.current.muted = !remoteVideoRef.current.muted;
       setIsEngineerAudioMuted(remoteVideoRef.current.muted);
+    }
+  };
+
+  const toggleEngineerMic = () => {
+    if (engineerMicStreamRef.current) {
+      const audioTrack = engineerMicStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsEngineerMicMuted(!audioTrack.enabled);
+        toast.info(audioTrack.enabled ? "Your microphone unmuted (Contractor can hear you)" : "Your microphone muted");
+      }
+    }
+  };
+
+  const toggleContractorSpeaker = () => {
+    if (contractorAudioRef.current) {
+      contractorAudioRef.current.muted = !contractorAudioRef.current.muted;
+      setIsContractorSpeakerMuted(contractorAudioRef.current.muted);
     }
   };
 
@@ -389,14 +457,19 @@ export function LiveStreamTab({
             <div className="relative aspect-video w-full flex items-center justify-center bg-slate-900">
               {/* Contractor's local camera preview */}
               {isContractor && (
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className={`w-full h-full object-cover ${!isStreaming ? "hidden" : ""}`}
-                />
+                <>
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${!isStreaming ? "hidden" : ""}`}
+                  />
+                  {/* Hidden audio element so contractor can hear engineer's voice */}
+                  <audio ref={contractorAudioRef} autoPlay playsInline className="hidden" />
+                </>
               )}
+
 
               {/* Engineer's remote video feed */}
               {isEngineer && (
@@ -540,6 +613,18 @@ export function LiveStreamTab({
                   </Button>
                   <Button
                     size="sm"
+                    variant="outline"
+                    className={`border-slate-700 ${isContractorSpeakerMuted ? "bg-red-950 text-red-400" : "bg-emerald-950 text-emerald-300"}`}
+                    onClick={toggleContractorSpeaker}
+                    title={isContractorSpeakerMuted ? "Unmute engineer voice" : "Mute engineer voice"}
+                  >
+                    {isContractorSpeakerMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                    <span className="text-xs ml-1.5">
+                      {isContractorSpeakerMuted ? "Eng. Voice Off" : "Eng. Voice (On)"}
+                    </span>
+                  </Button>
+                  <Button
+                    size="sm"
                     variant="destructive"
                     className="gap-1.5"
                     onClick={stopBroadcasting}
@@ -565,6 +650,20 @@ export function LiveStreamTab({
                       {isEngineerAudioMuted ? "Contractor Muted" : "Contractor Audio (On)"}
                     </span>
                   </Button>
+                  {isEngineerMicActive && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className={`border-slate-700 ${isEngineerMicMuted ? "bg-red-950 text-red-400" : "bg-slate-800 text-slate-200"}`}
+                      onClick={toggleEngineerMic}
+                      title={isEngineerMicMuted ? "Unmute your mic (contractor can't hear you)" : "Mute your mic"}
+                    >
+                      {isEngineerMicMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                      <span className="text-xs ml-1.5">
+                        {isEngineerMicMuted ? "Your Mic Off" : "Your Mic (Live)"}
+                      </span>
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="destructive"
