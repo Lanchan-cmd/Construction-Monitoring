@@ -132,6 +132,21 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun resetPassword(email: String, onSuccess: () -> Unit = {}) {
+        _isAuthenticating.value = true
+        _authError.value = null
+        viewModelScope.launch {
+            val result = authRepo.resetPassword(email)
+            _isAuthenticating.value = false
+            if (result.isSuccess) {
+                showToast("Password reset link sent to your email!")
+                onSuccess()
+            } else {
+                _authError.value = result.exceptionOrNull()?.message ?: "Failed to send reset link"
+            }
+        }
+    }
+
     fun signOut() {
         viewModelScope.launch { authRepo.signOut() }
     }

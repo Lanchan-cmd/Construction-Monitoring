@@ -88,6 +88,15 @@ class AuthRepository {
         Result.failure(e)
     }
 
+    /** Send password reset link to user email. */
+    suspend fun resetPassword(email: String): Result<Unit> = try {
+        supabaseClient.auth.resetPasswordForEmail(email)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Log.e("AuthRepository", "Reset password failed: ${e.message}")
+        Result.failure(e)
+    }
+
     /** Sign out and clear the current profile. */
     suspend fun signOut() {
         try {

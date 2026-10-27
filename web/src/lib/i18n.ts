@@ -32,6 +32,13 @@ const en: Dict = {
   "auth.invalidCredentials": "Invalid email or password",
   "auth.passwordMismatch": "Passwords do not match",
   "auth.selectRole": "Select your role",
+  "auth.forgotPassword": "Forgot Password?",
+  "auth.forgotPasswordTitle": "Reset Password",
+  "auth.forgotPasswordSubtitle": "Enter your email address and we'll send you a password reset link",
+  "auth.sendResetLink": "Send Reset Link",
+  "auth.sendingResetLink": "Sending reset link...",
+  "auth.resetLinkSent": "Password reset link sent to your email!",
+  "auth.backToLogin": "Back to Sign In",
 
   // Roles
   "role.admin": "Admin",
@@ -256,6 +263,13 @@ const kn: Dict = {
   "auth.invalidCredentials": "ತಪ್ಪಾದ ಇಮೇಲ್ ಅಥವಾ ಪಾಸ್ವರ್ಡ್",
   "auth.passwordMismatch": "ಪಾಸ್ವರ್ಡ್ ಹೊಂದುತ್ತಿಲ್ಲ",
   "auth.selectRole": "ನಿಮ್ಮ ಪಾತ್ರ ಆಯ್ಕೆಮಾಡಿ",
+  "auth.forgotPassword": "ಪಾಸ್ವರ್ಡ್ ಮರೆತಿರಾ?",
+  "auth.forgotPasswordTitle": "ಪಾಸ್ವರ್ಡ್ ಮರುಹೊಂದಿಸಿ",
+  "auth.forgotPasswordSubtitle": "ನಿಮ್ಮ ಇಮೇಲ್ ವಿಳಾಸವನ್ನು ನಮೂದಿಸಿ, ನಾವು ಮರುಹೊಂದಿಸುವ ಲಿಂಕ್ ಕಳುಹಿಸುತ್ತೇವೆ",
+  "auth.sendResetLink": "ಮರುಹೊಂದಿಸುವ ಲಿಂಕ್ ಕಳುಹಿಸಿ",
+  "auth.sendingResetLink": "ಲಿಂಕ್ ಕಳುಹಿಸಲಾಗುತ್ತಿದೆ...",
+  "auth.resetLinkSent": "ನಿಮ್ಮ ಇಮೇಲ್‌ಗೆ ಪಾಸ್ವರ್ಡ್ ಮರುಹೊಂದಿಸುವ ಲಿಂಕ್ ಕಳುಹಿಸಲಾಗಿದೆ!",
+  "auth.backToLogin": "ಸೈನ್ ಇನ್‌ಗೆ ಹಿಂತಿರುಗಿ",
 
   // Roles
   "role.admin": "ನಿರ್ವಾಹಕ",

@@ -19,10 +19,10 @@ const ROLES: { value: UserRole; labelKey: string; icon: typeof HardHat }[] = [
 ];
 
 export default function LoginPage() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, resetPassword } = useAuth();
   const { language, setLanguage } = usePrefs();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -34,6 +34,18 @@ export default function LoginPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
+
+    if (mode === "forgot") {
+      const { error } = await resetPassword(email.trim());
+      if (error) {
+        toast.error(error);
+      } else {
+        toast.success(t("auth.resetLinkSent", language));
+        setMode("login");
+      }
+      setSubmitting(false);
+      return;
+    }
 
     if (mode === "login") {
       const { error, profile } = await signIn(email, password);
@@ -138,10 +150,18 @@ export default function LoginPage() {
 
           <div className="mb-8">
             <h2 className="text-2xl font-bold tracking-tight">
-              {mode === "login" ? t("auth.loginTitle", language) : t("auth.signupTitle", language)}
+              {mode === "login"
+                ? t("auth.loginTitle", language)
+                : mode === "signup"
+                  ? t("auth.signupTitle", language)
+                  : t("auth.forgotPasswordTitle", language)}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              {mode === "login" ? t("auth.loginSubtitle", language) : t("auth.signupSubtitle", language)}
+              {mode === "login"
+                ? t("auth.loginSubtitle", language)
+                : mode === "signup"
+                  ? t("auth.signupSubtitle", language)
+                  : t("auth.forgotPasswordSubtitle", language)}
             </p>
           </div>
 
@@ -181,38 +201,40 @@ export default function LoginPage() {
               </>
             )}
 
-            {/* Role selector — shown on BOTH login and signup */}
-            <div className="space-y-1.5">
-              <Label>
-                {mode === "login" ? "Login as" : t("auth.selectRole", language)}
-              </Label>
-              <div className="grid grid-cols-3 gap-2">
-                {ROLES.map((r) => {
-                  const Icon = r.icon;
-                  return (
-                    <button
-                      key={r.value}
-                      type="button"
-                      onClick={() => setRole(r.value)}
-                      className={cn(
-                        "flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs font-medium transition-all",
-                        role === r.value
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border text-muted-foreground hover:border-primary/50",
-                      )}
-                    >
-                      <Icon className="h-5 w-5" />
-                      {t(r.labelKey, language)}
-                    </button>
-                  );
-                })}
+            {/* Role selector — shown on login and signup */}
+            {mode !== "forgot" && (
+              <div className="space-y-1.5">
+                <Label>
+                  {mode === "login" ? "Login as" : t("auth.selectRole", language)}
+                </Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {ROLES.map((r) => {
+                    const Icon = r.icon;
+                    return (
+                      <button
+                        key={r.value}
+                        type="button"
+                        onClick={() => setRole(r.value)}
+                        className={cn(
+                          "flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs font-medium transition-all",
+                          role === r.value
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border text-muted-foreground hover:border-primary/50",
+                        )}
+                      >
+                        <Icon className="h-5 w-5" />
+                        {t(r.labelKey, language)}
+                      </button>
+                    );
+                  })}
+                </div>
+                {mode === "login" && (
+                  <p className="text-xs text-muted-foreground pt-0.5">
+                    Select the same role you chose when you signed up.
+                  </p>
+                )}
               </div>
-              {mode === "login" && (
-                <p className="text-xs text-muted-foreground pt-0.5">
-                  Select the same role you chose when you signed up.
-                </p>
-              )}
-            </div>
+            )}
 
             <div className="space-y-1.5">
               <Label htmlFor="email">{t("auth.email", language)}</Label>
@@ -230,22 +252,35 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="password">{t("auth.password", language)}</Label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  className="pl-10"
-                  placeholder="••••••••"
-                />
+            {mode !== "forgot" && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">{t("auth.password", language)}</Label>
+                  {mode === "login" && (
+                    <button
+                      type="button"
+                      onClick={() => setMode("forgot")}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      {t("auth.forgotPassword", language)}
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={6}
+                    className="pl-10"
+                    placeholder="••••••••"
+                  />
+                </div>
               </div>
-            </div>
+            )}
 
             {mode === "signup" && (
               <div className="space-y-1.5">
@@ -270,22 +305,38 @@ export default function LoginPage() {
               {submitting
                 ? mode === "login"
                   ? t("auth.signingIn", language)
-                  : t("auth.signingUp", language)
+                  : mode === "signup"
+                    ? t("auth.signingUp", language)
+                    : t("auth.sendingResetLink", language)
                 : mode === "login"
                   ? t("auth.login", language)
-                  : t("auth.signup", language)}
+                  : mode === "signup"
+                    ? t("auth.signup", language)
+                    : t("auth.sendResetLink", language)}
               {!submitting && <ArrowRight className="h-4 w-4" />}
             </Button>
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            {mode === "login" ? t("auth.noAccount", language) : t("auth.haveAccount", language)}{" "}
-            <button
-              onClick={() => setMode(mode === "login" ? "signup" : "login")}
-              className="font-semibold text-primary hover:underline"
-            >
-              {mode === "login" ? t("auth.signup", language) : t("auth.login", language)}
-            </button>
+            {mode === "forgot" ? (
+              <button
+                type="button"
+                onClick={() => setMode("login")}
+                className="font-semibold text-primary hover:underline"
+              >
+                ← {t("auth.backToLogin", language)}
+              </button>
+            ) : (
+              <>
+                {mode === "login" ? t("auth.noAccount", language) : t("auth.haveAccount", language)}{" "}
+                <button
+                  onClick={() => setMode(mode === "login" ? "signup" : "login")}
+                  className="font-semibold text-primary hover:underline"
+                >
+                  {mode === "login" ? t("auth.signup", language) : t("auth.login", language)}
+                </button>
+              </>
+            )}
           </p>
         </div>
       </div>

@@ -57,6 +57,8 @@ fun LoginScreen(
     var phone by remember { mutableStateOf("") }
     var selectedRole by remember { mutableStateOf("engineer") }
     var passwordVisible by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
+    var resetEmail by remember { mutableStateOf("") }
 
     // Navigate to dashboard when user becomes available
     LaunchedEffect(currentUser) {
@@ -216,6 +218,28 @@ fun LoginScreen(
                 },
             )
 
+            if (isLoginMode) {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(
+                        onClick = {
+                            resetEmail = email
+                            showResetDialog = true
+                        },
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            "Forgot Password?",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+
             // Error message
             authError?.let { error ->
                 Spacer(Modifier.height(12.dp))
@@ -265,6 +289,48 @@ fun LoginScreen(
                 "© 2026 Nirman — Built for Indian Construction",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (showResetDialog) {
+            AlertDialog(
+                onDismissRequest = { showResetDialog = false },
+                title = { Text("Reset Password") },
+                text = {
+                    Column {
+                        Text(
+                            "Enter your email address to receive a password reset link.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedTextField(
+                            value = resetEmail,
+                            onValueChange = { resetEmail = it },
+                            label = { Text("Email") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.resetPassword(resetEmail.trim()) {
+                                showResetDialog = false
+                            }
+                        },
+                        enabled = !isAuthenticating && resetEmail.isNotBlank(),
+                    ) {
+                        Text("Send Link")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showResetDialog = false }) {
+                        Text("Cancel")
+                    }
+                },
             )
         }
     }
