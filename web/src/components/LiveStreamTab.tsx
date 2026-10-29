@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Peer from "peerjs";
 import type { MediaConnection } from "peerjs";
 import {
   Video, VideoOff, Mic, MicOff, PhoneCall, PhoneOff, Radio, Eye,
-  RefreshCw, HardHat, UserCheck, Volume2, VolumeX,
+  RefreshCw, HardHat, UserCheck, Volume2, VolumeX, Cctv, Zap,
+  Wifi, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -37,12 +38,26 @@ export function LiveStreamTab({
   // Broadcaster peer ID deterministic by project
   const broadcasterPeerId = `nirman-${project.id.replace(/-/g, "").slice(0, 18)}-site`;
 
+  // Persistent storage keys
+  const cctvStorageKey = `nirman_cctv_mode_${project.id}`;
+  const autoConnectStorageKey = `nirman_auto_connect_${project.id}`;
+
   // ── State ────────────────────────────────────────────────────────────────────
   const [peer, setPeer] = useState<Peer | null>(null);
   const [peerReady, setPeerReady] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isViewing, setIsViewing] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<"environment" | "user">("environment");
+
+  // Always-On / CCTV mode state
+  const [isCctvMode, setIsCctvMode] = useState<boolean>(() => {
+    return localStorage.getItem(cctvStorageKey) === "true";
+  });
+  const [autoConnect, setAutoConnect] = useState<boolean>(() => {
+    return localStorage.getItem(autoConnectStorageKey) !== "false";
+  });
+  const [isAutoConnecting, setIsAutoConnecting] = useState(false);
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
 
   // Contractor controls
   const [isMuted, setIsMuted] = useState(false);
@@ -57,109 +72,52 @@ export function LiveStreamTab({
   const [needsAudioUnlock, setNeedsAudioUnlock] = useState(false);
 
   const [activeViewersCount, setActiveViewersCount] = useState(0);
-  const [connectionStatus, setConnectionStatus] = useState<string>("Idle");
+  const [connectionStatus, setConnectionStatus] = useState<string>("Connecting to signaling...");
 
   // ── Refs ─────────────────────────────────────────────────────────────────────
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  // Separate audio element so contractor hears engineer (video stays muted=true on contractor)
   const contractorAudioRef = useRef<HTMLAudioElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const engineerMicStreamRef = useRef<MediaStream | null>(null);
   const outgoingCallsRef = useRef<MediaConnection[]>([]);
   const incomingCallRef = useRef<MediaConnection | null>(null);
+  const peerInstanceRef = useRef<Peer | null>(null);
+  const wakeLockRef = useRef<unknown>(null);
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const autoConnectRef = useRef(autoConnect);
+  autoConnectRef.current = autoConnect;
+  const isCctvModeRef = useRef(isCctvMode);
+  isCctvModeRef.current = isCctvMode;
 
-  // ── PeerJS initialization ────────────────────────────────────────────────────
-  useEffect(() => {
-    let p: Peer;
-    setConnectionStatus("Connecting to signaling network...");
-
-    const iceServers = [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-      { urls: "stun:global.stun.twilio.com:3478" },
-    ];
-
-    if (isContractor) {
-      p = new Peer(broadcasterPeerId, { config: { iceServers } });
-    } else {
-      p = new Peer({ config: { iceServers } });
+  // ── Screen Wake Lock (Keep phone screen awake in 24/7 CCTV mode) ─────────────
+  const acquireWakeLock = useCallback(async () => {
+    try {
+      const nav = navigator as unknown as { wakeLock?: { request: (type: string) => Promise<unknown> } };
+      if (nav.wakeLock && !wakeLockRef.current) {
+        wakeLockRef.current = await nav.wakeLock.request("screen");
+        console.log("Screen Wake Lock acquired: phone screen will stay awake.");
+      }
+    } catch (err) {
+      console.warn("Wake lock request failed:", err);
     }
+  }, []);
 
-    p.on("open", () => {
-      setPeerReady(true);
-      setConnectionStatus("Signaling ready");
-    });
-
-    p.on("error", (err: unknown) => {
-      const errorMsg = (err as { message?: string })?.message || "Peer connection error";
-      const errorType = (err as { type?: string })?.type;
-      if (errorType === "unavailable-id") {
-        setConnectionStatus("Site stream channel already reserved / active");
-      } else {
-        setConnectionStatus(`Network: ${errorMsg}`);
+  const releaseWakeLock = useCallback(() => {
+    try {
+      const lock = wakeLockRef.current as { release?: () => Promise<void> } | null;
+      if (lock && typeof lock.release === "function") {
+        lock.release();
+        wakeLockRef.current = null;
       }
-    });
-
-    // ── Contractor: receive incoming call from engineer ───────────────────────
-    if (isContractor) {
-      p.on("call", (call) => {
-        if (!localStreamRef.current) {
-          call.close();
-          return;
-        }
-
-        // Answer with contractor's full camera + mic stream  →  engineer hears & sees contractor
-        call.answer(localStreamRef.current);
-        outgoingCallsRef.current.push(call);
-        setActiveViewersCount((c) => c + 1);
-
-        // Receive engineer's microphone stream  →  contractor hears engineer
-        call.on("stream", (remoteEngineerStream) => {
-          if (contractorAudioRef.current) {
-            contractorAudioRef.current.srcObject = remoteEngineerStream;
-            contractorAudioRef.current.muted = false;
-            contractorAudioRef.current.volume = 1.0;
-            contractorAudioRef.current.play().catch(() => {
-              // Browser blocked autoplay — show unlock button
-              setNeedsContractorAudioUnlock(true);
-            });
-          }
-        });
-
-        call.on("close", () => {
-          outgoingCallsRef.current = outgoingCallsRef.current.filter((c) => c !== call);
-          setActiveViewersCount((c) => Math.max(0, c - 1));
-          if (contractorAudioRef.current) {
-            contractorAudioRef.current.srcObject = null;
-          }
-          setNeedsContractorAudioUnlock(false);
-        });
-
-        toast.info("Engineer joined! 🎙️ 2-way audio is active — you can speak to each other.");
-      });
+    } catch {
+      // ignore
     }
+  }, []);
 
-    setPeer(p);
-
-    return () => {
-      outgoingCallsRef.current.forEach((c) => c.close());
-      incomingCallRef.current?.close();
-      if (engineerMicStreamRef.current) {
-        engineerMicStreamRef.current.getTracks().forEach((t) => t.stop());
-        engineerMicStreamRef.current = null;
-      }
-      if (contractorAudioRef.current) {
-        contractorAudioRef.current.srcObject = null;
-      }
-      p.destroy();
-      stopLocalStream();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id, isContractor]);
-
-  // ── Helpers ──────────────────────────────────────────────────────────────────
-  const stopLocalStream = () => {
+  // ── Stop local stream ────────────────────────────────────────────────────────
+  const stopLocalStream = useCallback(() => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
@@ -167,10 +125,10 @@ export function LiveStreamTab({
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = null;
     }
-  };
+  }, []);
 
   // ── Contractor: start broadcasting ──────────────────────────────────────────
-  const startBroadcasting = async () => {
+  const startBroadcasting = useCallback(async (isAuto = false) => {
     try {
       setConnectionStatus("Starting site camera...");
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -192,28 +150,343 @@ export function LiveStreamTab({
       }
 
       setIsStreaming(true);
-      setConnectionStatus("Live streaming from construction site");
-      toast.success("Live broadcast started! Engineer can now see and hear you.");
+      acquireWakeLock();
+      setConnectionStatus(
+        isCctvModeRef.current
+          ? "24/7 CCTV Live Standby — Ready for Engineers"
+          : "Live streaming from construction site"
+      );
+      if (!isAuto) {
+        toast.success("Site camera is now live! Engineers can connect automatically anytime.");
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(`Camera/Mic error: ${msg}`);
-      setConnectionStatus("Camera or microphone access denied");
+      setConnectionStatus("Camera access denied or device busy");
     }
-  };
+  }, [cameraFacing, acquireWakeLock]);
 
   // ── Contractor: stop broadcasting ───────────────────────────────────────────
-  const stopBroadcasting = () => {
+  const stopBroadcasting = useCallback(() => {
     outgoingCallsRef.current.forEach((c) => c.close());
     outgoingCallsRef.current = [];
     stopLocalStream();
+    releaseWakeLock();
     setIsStreaming(false);
     setActiveViewersCount(0);
     setNeedsContractorAudioUnlock(false);
-    setConnectionStatus("Broadcast ended");
-    toast.info("Live stream ended");
+    setConnectionStatus("Site camera stopped");
+    toast.info("Live broadcast stopped");
+  }, [stopLocalStream, releaseWakeLock]);
+
+  // ── Engineer: connect to site feed with microphone ───────────────────────────
+  const connectToSiteFeed = useCallback(async (isAutomatic = false) => {
+    const currentPeer = peerInstanceRef.current;
+    if (!currentPeer || currentPeer.disconnected || currentPeer.destroyed) {
+      if (!isAutomatic) toast.error("Signaling network not ready yet");
+      return;
+    }
+
+    // Clear any existing retry timers
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    setRetryCountdown(null);
+
+    setIsAutoConnecting(true);
+    setConnectionStatus("Connecting to site camera feed...");
+
+    // Engineer sends: dummy video + real mic audio (or dummy audio fallback)
+    const canvas = document.createElement("canvas");
+    canvas.width = 2;
+    canvas.height = 2;
+    const dummyVideoTrack = canvas.captureStream(1).getVideoTracks()[0];
+    const tracks: MediaStreamTrack[] = [dummyVideoTrack];
+
+    // Request engineer mic so contractor can hear engineer
+    try {
+      if (!engineerMicStreamRef.current) {
+        const micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        engineerMicStreamRef.current = micStream;
+      }
+      const engineerAudioTrack = engineerMicStreamRef.current?.getAudioTracks()[0];
+      if (engineerAudioTrack) {
+        tracks.push(engineerAudioTrack);
+        setIsEngineerMicActive(true);
+      }
+    } catch {
+      // Fallback: silent audio track so WebRTC still negotiates audio channel
+      try {
+        const AudioCtxClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtxClass) {
+          const ctx = new AudioCtxClass();
+          const osc = ctx.createOscillator();
+          const dst = ctx.createMediaStreamDestination();
+          osc.connect(dst);
+          osc.start();
+          const dummyAudio = dst.stream.getAudioTracks()[0];
+          if (dummyAudio) {
+            dummyAudio.enabled = false;
+            tracks.push(dummyAudio);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const engineerStream = new MediaStream(tracks);
+    const call = currentPeer.call(broadcasterPeerId, engineerStream);
+    incomingCallRef.current = call;
+
+    // Schedule retry if contractor doesn't answer within 6 seconds
+    const scheduleRetry = (msg: string) => {
+      setIsViewing(false);
+      setIsAutoConnecting(false);
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+
+      if (autoConnectRef.current) {
+        let count = 5;
+        setRetryCountdown(count);
+        setConnectionStatus(`${msg} — Retrying in ${count}s...`);
+
+        countdownIntervalRef.current = setInterval(() => {
+          count -= 1;
+          if (count > 0) {
+            setRetryCountdown(count);
+            setConnectionStatus(`${msg} — Retrying in ${count}s...`);
+          } else {
+            if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+            setRetryCountdown(null);
+          }
+        }, 1000);
+
+        retryTimerRef.current = setTimeout(() => {
+          connectToSiteFeed(true);
+        }, 5000);
+      } else {
+        setConnectionStatus(msg);
+      }
+    };
+
+    call.on("stream", (remoteStream) => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      setRetryCountdown(null);
+      setIsAutoConnecting(false);
+      setIsViewing(true);
+      setConnectionStatus("Connected — 24/7 Live Feed (2-Way Audio Active)");
+
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStream;
+        remoteVideoRef.current.muted = false;
+        remoteVideoRef.current.volume = 1.0;
+
+        remoteVideoRef.current.play().catch(() => {
+          setNeedsAudioUnlock(true);
+        });
+      }
+      if (!isAutomatic) {
+        toast.success("Connected to live site camera!");
+      }
+    });
+
+    call.on("close", () => {
+      scheduleRetry("Site camera feed disconnected");
+    });
+
+    call.on("error", () => {
+      scheduleRetry("Site camera is offline or waiting for phone");
+    });
+  }, [broadcasterPeerId]);
+
+  // ── Engineer: disconnect ─────────────────────────────────────────────────────
+  const disconnectSiteFeed = useCallback(() => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    setRetryCountdown(null);
+    setIsAutoConnecting(false);
+
+    incomingCallRef.current?.close();
+    incomingCallRef.current = null;
+    engineerMicStreamRef.current?.getTracks().forEach((t) => t.stop());
+    engineerMicStreamRef.current = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+
+    setIsViewing(false);
+    setIsEngineerMicActive(false);
+    setIsEngineerMicMuted(false);
+    setNeedsAudioUnlock(false);
+    setConnectionStatus("Disconnected");
+  }, []);
+
+  // ── PeerJS initialization ────────────────────────────────────────────────────
+  useEffect(() => {
+    let p: Peer;
+    setConnectionStatus("Connecting to signaling network...");
+
+    const iceServers = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:global.stun.twilio.com:3478" },
+    ];
+
+    if (isContractor) {
+      p = new Peer(broadcasterPeerId, { config: { iceServers } });
+    } else {
+      p = new Peer({ config: { iceServers } });
+    }
+
+    peerInstanceRef.current = p;
+
+    p.on("open", () => {
+      setPeerReady(true);
+      setPeer(p);
+      setConnectionStatus("Signaling ready");
+
+      // Auto-start for contractor if CCTV mode was enabled
+      if (isContractor && isCctvModeRef.current) {
+        startBroadcasting(true);
+      }
+
+      // Auto-connect for engineer if autoConnect is enabled
+      if (isEngineer && autoConnectRef.current) {
+        setTimeout(() => {
+          connectToSiteFeed(true);
+        }, 800);
+      }
+    });
+
+    p.on("error", (err: unknown) => {
+      const errorMsg = (err as { message?: string })?.message || "Peer connection error";
+      const errorType = (err as { type?: string })?.type;
+      if (errorType === "unavailable-id") {
+        setConnectionStatus("Site stream channel already active on another phone");
+      } else {
+        setConnectionStatus(`Network: ${errorMsg}`);
+      }
+    });
+
+    // Contractor auto-answers incoming calls continuously
+    if (isContractor) {
+      p.on("call", (call) => {
+        if (!localStreamRef.current) {
+          call.close();
+          return;
+        }
+
+        call.answer(localStreamRef.current);
+        outgoingCallsRef.current.push(call);
+        setActiveViewersCount((c) => c + 1);
+
+        call.on("stream", (remoteEngineerStream) => {
+          if (contractorAudioRef.current) {
+            contractorAudioRef.current.srcObject = remoteEngineerStream;
+            contractorAudioRef.current.muted = false;
+            contractorAudioRef.current.volume = 1.0;
+            contractorAudioRef.current.play().catch(() => {
+              setNeedsContractorAudioUnlock(true);
+            });
+          }
+        });
+
+        call.on("close", () => {
+          outgoingCallsRef.current = outgoingCallsRef.current.filter((c) => c !== call);
+          setActiveViewersCount((c) => Math.max(0, c - 1));
+          if (outgoingCallsRef.current.length === 0 && contractorAudioRef.current) {
+            contractorAudioRef.current.srcObject = null;
+          }
+          setNeedsContractorAudioUnlock(false);
+        });
+
+        toast.info("An Engineer connected to your site camera!");
+      });
+    }
+
+    // Re-acquire wake lock if tab is focused back
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && (isStreaming || isCctvModeRef.current)) {
+        acquireWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      outgoingCallsRef.current.forEach((c) => c.close());
+      incomingCallRef.current?.close();
+      if (engineerMicStreamRef.current) {
+        engineerMicStreamRef.current.getTracks().forEach((t) => t.stop());
+        engineerMicStreamRef.current = null;
+      }
+      if (contractorAudioRef.current) {
+        contractorAudioRef.current.srcObject = null;
+      }
+      p.destroy();
+      peerInstanceRef.current = null;
+      stopLocalStream();
+      releaseWakeLock();
+    };
+  }, [
+    project.id,
+    isContractor,
+    isEngineer,
+    broadcasterPeerId,
+    acquireWakeLock,
+    releaseWakeLock,
+    startBroadcasting,
+    connectToSiteFeed,
+    stopLocalStream,
+  ]);
+
+  // ── Toggle CCTV Mode (Contractor) ───────────────────────────────────────────
+  const toggleCctvMode = () => {
+    const nextVal = !isCctvMode;
+    setIsCctvMode(nextVal);
+    localStorage.setItem(cctvStorageKey, String(nextVal));
+
+    if (nextVal) {
+      toast.success("24/7 CCTV Mode Enabled: Camera stays live & auto-answers incoming engineers!");
+      if (!isStreaming) {
+        startBroadcasting(false);
+      } else {
+        acquireWakeLock();
+      }
+    } else {
+      toast.info("24/7 CCTV Mode Disabled");
+      releaseWakeLock();
+    }
   };
 
-  // ── Contractor: flip camera ──────────────────────────────────────────────────
+  // ── Toggle Auto-Connect (Engineer) ──────────────────────────────────────────
+  const toggleAutoConnect = () => {
+    const nextVal = !autoConnect;
+    setAutoConnect(nextVal);
+    localStorage.setItem(autoConnectStorageKey, String(nextVal));
+
+    if (nextVal) {
+      toast.success("Auto-Connect Enabled: Feed will automatically connect whenever site phone is online.");
+      if (!isViewing) {
+        connectToSiteFeed(false);
+      }
+    } else {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      setRetryCountdown(null);
+      toast.info("Auto-Connect Disabled");
+    }
+  };
+
+  // ── Toggle camera direction ──────────────────────────────────────────────────
   const flipCamera = async () => {
     if (!isStreaming) return;
     const newFacing = cameraFacing === "environment" ? "user" : "environment";
@@ -235,7 +508,6 @@ export function LiveStreamTab({
         localVideoRef.current.srcObject = newStream;
       }
 
-      // Replace tracks in all active viewer calls
       const newVideoTrack = newStream.getVideoTracks()[0];
       const newAudioTrack = newStream.getAudioTracks()[0];
       outgoingCallsRef.current.forEach((call) => {
@@ -245,119 +517,13 @@ export function LiveStreamTab({
         const audioSender = senders?.find((s) => s.track?.kind === "audio");
         if (audioSender && newAudioTrack) audioSender.replaceTrack(newAudioTrack);
       });
-      toast.success(`Switched to ${newFacing === "environment" ? "back" : "front"} camera`);
+      toast.success(`Switched to ${newFacing === "environment" ? "rear" : "front"} camera`);
     } catch {
       toast.error("Failed to switch camera");
     }
   };
 
-  // ── Engineer: connect to site feed with microphone ───────────────────────────
-  const connectToSiteFeed = async () => {
-    if (!peer) {
-      toast.error("Signaling peer not ready");
-      return;
-    }
-
-    setConnectionStatus("Activating microphone & connecting to site...");
-
-    // Engineer sends: dummy video + real mic audio
-    const canvas = document.createElement("canvas");
-    canvas.width = 2;
-    canvas.height = 2;
-    const dummyVideoTrack = canvas.captureStream(1).getVideoTracks()[0];
-    const tracks: MediaStreamTrack[] = [dummyVideoTrack];
-
-    // Request engineer mic so contractor can hear the engineer
-    try {
-      const micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      engineerMicStreamRef.current = micStream;
-      const engineerAudioTrack = micStream.getAudioTracks()[0];
-      if (engineerAudioTrack) {
-        tracks.push(engineerAudioTrack);
-        setIsEngineerMicActive(true);
-      }
-    } catch (micErr) {
-      console.warn("Engineer mic denied — using silent audio fallback:", micErr);
-      // Fallback: silent audio track so WebRTC still negotiates audio channel
-      try {
-        const AudioCtxClass =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (AudioCtxClass) {
-          const ctx = new AudioCtxClass();
-          const osc = ctx.createOscillator();
-          const dst = ctx.createMediaStreamDestination();
-          osc.connect(dst);
-          osc.start();
-          const dummyAudio = dst.stream.getAudioTracks()[0];
-          if (dummyAudio) {
-            dummyAudio.enabled = false;
-            tracks.push(dummyAudio);
-          }
-        }
-      } catch {
-        // ignore
-      }
-      toast.warning("Mic not available — you can hear the contractor but they cannot hear you.");
-    }
-
-    const engineerStream = new MediaStream(tracks);
-    const call = peer.call(broadcasterPeerId, engineerStream);
-    incomingCallRef.current = call;
-
-    // Receive contractor's camera + mic stream  →  engineer sees video & hears contractor
-    call.on("stream", (remoteStream) => {
-      setIsViewing(true);
-      setConnectionStatus("Connected — 2-Way Live Communication 🎙️📹");
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStream;
-        remoteVideoRef.current.muted = false;
-        remoteVideoRef.current.volume = 1.0;
-
-        remoteVideoRef.current.play().catch(() => {
-          setNeedsAudioUnlock(true);
-        });
-      }
-      toast.success("Connected! Both contractor and engineer can now speak to each other. 🔊");
-    });
-
-    call.on("close", () => {
-      setIsViewing(false);
-      setConnectionStatus("Site stream ended or contractor disconnected");
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-      toast.info("Site camera session ended");
-    });
-
-    call.on("error", () => {
-      setIsViewing(false);
-      setConnectionStatus("Failed to reach contractor camera");
-      toast.error("Contractor has not started the live camera yet.");
-    });
-  };
-
-  // ── Engineer: disconnect ─────────────────────────────────────────────────────
-  const disconnectSiteFeed = () => {
-    incomingCallRef.current?.close();
-    incomingCallRef.current = null;
-    engineerMicStreamRef.current?.getTracks().forEach((t) => t.stop());
-    engineerMicStreamRef.current = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    setIsViewing(false);
-    setIsEngineerMicActive(false);
-    setIsEngineerMicMuted(false);
-    setNeedsAudioUnlock(false);
-    setConnectionStatus("Disconnected");
-  };
-
   // ── Toggle handlers ──────────────────────────────────────────────────────────
-
-  // Engineer: mute/unmute contractor's incoming audio (via video element)
   const toggleEngineerAudio = () => {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.muted = !remoteVideoRef.current.muted;
@@ -365,31 +531,24 @@ export function LiveStreamTab({
     }
   };
 
-  // Engineer: mute/unmute their own outgoing microphone
   const toggleEngineerMic = () => {
     const audioTrack = engineerMicStreamRef.current?.getAudioTracks()[0];
     if (audioTrack) {
       audioTrack.enabled = !audioTrack.enabled;
       setIsEngineerMicMuted(!audioTrack.enabled);
-      toast.info(
-        audioTrack.enabled
-          ? "Your mic is live — contractor can hear you 🎙️"
-          : "Your mic is muted"
-      );
+      toast.info(audioTrack.enabled ? "Your mic is live — contractor can hear you 🎙️" : "Your mic is muted");
     }
   };
 
-  // Contractor: mute/unmute their own outgoing microphone (engineer hears them)
   const toggleMute = () => {
     const audioTrack = localStreamRef.current?.getAudioTracks()[0];
     if (audioTrack) {
       audioTrack.enabled = !audioTrack.enabled;
       setIsMuted(!audioTrack.enabled);
-      toast.info(audioTrack.enabled ? "Your mic is live — engineer can hear you 🎙️" : "Your mic muted");
+      toast.info(audioTrack.enabled ? "Site mic is live 🎙️" : "Site mic muted");
     }
   };
 
-  // Contractor: mute/unmute their video
   const toggleVideo = () => {
     const videoTrack = localStreamRef.current?.getVideoTracks()[0];
     if (videoTrack) {
@@ -398,7 +557,6 @@ export function LiveStreamTab({
     }
   };
 
-  // Contractor: mute/unmute incoming engineer voice through contractorAudioRef
   const toggleContractorSpeaker = () => {
     if (contractorAudioRef.current) {
       contractorAudioRef.current.muted = !contractorAudioRef.current.muted;
@@ -414,18 +572,24 @@ export function LiveStreamTab({
         <CardHeader className="py-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
-              <div className="flex items-center gap-2">
-                <Radio className={`h-5 w-5 ${isStreaming ? "text-red-500 animate-pulse" : "text-muted-foreground"}`} />
-                <CardTitle className="text-lg">Live Site Video Call</CardTitle>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Radio className={`h-5 w-5 ${isStreaming || isViewing ? "text-red-500 animate-pulse" : "text-muted-foreground"}`} />
+                <CardTitle className="text-lg">Live Site Camera (Always-On CCTV)</CardTitle>
                 <Badge variant={isStreaming ? "destructive" : isViewing ? "default" : "outline"} className="capitalize">
-                  {isStreaming ? "LIVE ON SITE" : isViewing ? "WATCHING LIVE" : "OFFLINE"}
+                  {isStreaming ? (isCctvMode ? "24/7 CCTV ACTIVE" : "LIVE ON SITE") : isViewing ? "WATCHING LIVE" : "STANDBY"}
                 </Badge>
+                {isCctvMode && isContractor && (
+                  <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 flex items-center gap-1 text-xs">
+                    <Zap className="h-3 w-3" /> Auto-Answer Enabled
+                  </Badge>
+                )}
               </div>
               <CardDescription className="mt-1">
-                Real-time 2-way audio &amp; video call between <strong>Contractor (Site)</strong> and <strong>Engineer</strong>.
+                Continuous real-time site camera streaming directly from <strong>Site Phone</strong> to <strong>Engineer</strong> with zero lag.
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
+
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-muted-foreground">Logged in as:</span>
               <Badge variant="secondary" className="capitalize flex items-center gap-1">
                 {isContractor ? <HardHat className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />}
@@ -453,21 +617,12 @@ export function LiveStreamTab({
                     muted
                     className={`w-full h-full object-cover ${!isStreaming ? "hidden" : ""}`}
                   />
-                  {/*
-                    Hidden audio element:
-                    - srcObject is set to remoteEngineerStream when engineer connects
-                    - This is how contractor HEARS the engineer's voice
-                  */}
                   <audio ref={contractorAudioRef} autoPlay playsInline className="hidden" />
                 </>
               )}
 
               {/* ── Engineer side: remote video + audio from contractor ── */}
               {isEngineer && (
-                /*
-                  This video element carries BOTH contractor's video AND audio.
-                  remoteVideoRef.muted = false ensures contractor voice plays.
-                */
                 <video
                   ref={remoteVideoRef}
                   autoPlay
@@ -480,37 +635,62 @@ export function LiveStreamTab({
               {((isContractor && !isStreaming) || (isEngineer && !isViewing)) && (
                 <div className="flex flex-col items-center justify-center p-8 text-center space-y-3">
                   <div className="h-16 w-16 rounded-full bg-slate-800 flex items-center justify-center text-slate-400">
-                    <Video className="h-8 w-8" />
+                    {isCctvMode ? <Cctv className="h-8 w-8 text-emerald-400" /> : <Video className="h-8 w-8" />}
                   </div>
                   <div>
                     <p className="text-base font-semibold text-slate-200">
-                      {isContractor ? "Ready to broadcast site camera" : "Waiting for contractor's site feed"}
+                      {isContractor
+                        ? isCctvMode ? "24/7 CCTV Camera Ready" : "Start Live Site Camera"
+                        : retryCountdown !== null
+                        ? `Site camera offline — Reconnecting in ${retryCountdown}s`
+                        : "Waiting for site camera feed"}
                     </p>
                     <p className="text-xs text-slate-400 max-w-sm mt-1">
                       {isContractor
-                        ? "Click 'Start Site Camera' to stream live video & audio to the engineer."
-                        : "Click 'Connect to Site Camera' to join the call. Your mic will be activated for 2-way communication."}
+                        ? "Mount this phone on site. Turn on '24/7 CCTV Mode' to keep it broadcasting and automatically answering engineers anytime."
+                        : autoConnect
+                        ? "Auto-connect is active. Your dashboard will automatically connect as soon as the site phone camera is online."
+                        : "Click 'Connect to Site Camera' to view what the site camera is broadcasting."}
                     </p>
                   </div>
+
                   {isEngineer && (
-                    <Button
-                      onClick={connectToSiteFeed}
-                      disabled={!peerReady}
-                      className="mt-2 gap-2 bg-blue-600 hover:bg-blue-700 text-white"
-                    >
-                      <Eye className="h-4 w-4" />
-                      Connect to Site Camera
-                    </Button>
+                    <div className="flex flex-col items-center gap-2">
+                      <Button
+                        onClick={() => connectToSiteFeed(false)}
+                        disabled={!peerReady || isAutoConnecting}
+                        className="mt-2 gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        <Eye className="h-4 w-4" />
+                        {isAutoConnecting ? "Connecting..." : "Connect to Site Camera"}
+                      </Button>
+                      {retryCountdown !== null && (
+                        <span className="text-[11px] text-amber-400 animate-pulse">
+                          Auto-retrying in {retryCountdown} seconds...
+                        </span>
+                      )}
+                    </div>
                   )}
+
                   {isContractor && (
-                    <Button
-                      onClick={startBroadcasting}
-                      disabled={!peerReady}
-                      className="mt-2 gap-2 bg-red-600 hover:bg-red-700 text-white"
-                    >
-                      <Video className="h-4 w-4" />
-                      Start Site Camera
-                    </Button>
+                    <div className="flex flex-col sm:flex-row items-center gap-2 mt-2">
+                      <Button
+                        onClick={() => startBroadcasting(false)}
+                        disabled={!peerReady}
+                        className="gap-2 bg-red-600 hover:bg-red-700 text-white"
+                      >
+                        <Video className="h-4 w-4" />
+                        Start Site Camera
+                      </Button>
+                      <Button
+                        onClick={toggleCctvMode}
+                        variant="outline"
+                        className="gap-2 border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10"
+                      >
+                        <Cctv className="h-4 w-4" />
+                        {isCctvMode ? "Disable 24/7 Mode" : "Enable 24/7 CCTV Mode"}
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}
@@ -526,11 +706,17 @@ export function LiveStreamTab({
                     {project.name}
                   </div>
 
+                  {isCctvMode && isContractor && (
+                    <div className="px-3 py-1 rounded-full bg-emerald-600/90 text-white text-xs font-semibold flex items-center gap-1">
+                      <Cctv className="h-3 w-3" /> 24/7 CCTV Active
+                    </div>
+                  )}
+
                   {/* Engineer: show contractor voice status */}
                   {isEngineer && isViewing && (
                     <div className={`px-3 py-1 rounded-full backdrop-blur-md text-xs font-semibold flex items-center gap-1.5 ${isEngineerAudioMuted ? "bg-red-600/80 text-white" : "bg-emerald-600/90 text-white"}`}>
                       {isEngineerAudioMuted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-                      <span>{isEngineerAudioMuted ? "Contractor Voice: Muted" : "Contractor Voice: Active 🔊"}</span>
+                      <span>{isEngineerAudioMuted ? "Site Voice: Muted" : "Site Voice: Active 🔊"}</span>
                     </div>
                   )}
 
@@ -547,7 +733,7 @@ export function LiveStreamTab({
                     <div className="px-3 py-1 rounded-full bg-black/60 backdrop-blur-md text-xs font-medium flex items-center gap-1.5">
                       {isMuted
                         ? <span className="text-red-400 flex items-center gap-1"><MicOff className="h-3.5 w-3.5" /> Mic Muted</span>
-                        : <span className="text-emerald-400 flex items-center gap-1"><Mic className="h-3.5 w-3.5" /> Your Mic: Live 🎙️</span>
+                        : <span className="text-emerald-400 flex items-center gap-1"><Mic className="h-3.5 w-3.5" /> Site Mic: Live 🎙️</span>
                       }
                     </div>
                   )}
@@ -574,7 +760,7 @@ export function LiveStreamTab({
                   }}
                   className="absolute bottom-6 left-4 z-20 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-2xl animate-bounce cursor-pointer"
                 >
-                  <Volume2 className="h-4 w-4" /> Tap to hear Contractor Voice
+                  <Volume2 className="h-4 w-4" /> Tap to hear Site Audio
                 </button>
               )}
 
@@ -598,113 +784,145 @@ export function LiveStreamTab({
               {isContractor && isStreaming && (
                 <div className="absolute top-4 right-4 px-3 py-1 rounded-full bg-black/60 backdrop-blur-md text-white text-xs flex items-center gap-1.5 z-10">
                   <Eye className="h-3.5 w-3.5 text-blue-400" />
-                  {activeViewersCount} Viewer{activeViewersCount !== 1 ? "s" : ""}
+                  {activeViewersCount} Active Viewer{activeViewersCount !== 1 ? "s" : ""}
                 </div>
               )}
             </div>
 
             {/* Video Controls Bar */}
             <div className="p-4 bg-slate-900 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-xs text-slate-400 flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+              <div className="text-xs text-slate-400 flex items-center gap-2 flex-wrap">
+                <span className={`h-2 w-2 rounded-full ${isStreaming || isViewing ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
                 <span>{connectionStatus}</span>
               </div>
 
               {/* ── Contractor Controls ── */}
-              {isContractor && isStreaming && (
+              {isContractor && (
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Flip camera */}
+                  {/* CCTV Mode Toggle */}
                   <Button
                     size="sm"
-                    variant="outline"
-                    className="border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
-                    onClick={flipCamera}
-                    title="Switch camera"
+                    variant={isCctvMode ? "default" : "outline"}
+                    className={`gap-1.5 ${isCctvMode ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "border-slate-700 text-slate-300"}`}
+                    onClick={toggleCctvMode}
+                    title="Keep camera permanently live & auto-answer engineers"
                   >
-                    <RefreshCw className="h-4 w-4" />
+                    <Cctv className="h-3.5 w-3.5" />
+                    <span className="text-xs">{isCctvMode ? "24/7 CCTV: ON" : "24/7 CCTV: OFF"}</span>
                   </Button>
 
-                  {/* Toggle contractor mic (engineer hears contractor) */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={`border-slate-700 ${isMuted ? "bg-red-950 text-red-400" : "bg-emerald-950 text-emerald-300"}`}
-                    onClick={toggleMute}
-                    title={isMuted ? "Unmute your mic" : "Mute your mic"}
-                  >
-                    {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                    <span className="text-xs ml-1.5">{isMuted ? "Mic Off" : "Mic (Live)"}</span>
-                  </Button>
+                  {isStreaming && (
+                    <>
+                      {/* Flip camera */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                        onClick={flipCamera}
+                        title="Switch front/rear camera"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
 
-                  {/* Toggle video */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={`border-slate-700 ${isVideoMuted ? "bg-red-950 text-red-400" : "bg-slate-800 text-slate-200"}`}
-                    onClick={toggleVideo}
-                    title={isVideoMuted ? "Turn Video On" : "Turn Video Off"}
-                  >
-                    {isVideoMuted ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
-                  </Button>
+                      {/* Toggle site mic */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={`border-slate-700 ${isMuted ? "bg-red-950 text-red-400" : "bg-emerald-950 text-emerald-300"}`}
+                        onClick={toggleMute}
+                        title={isMuted ? "Unmute site mic" : "Mute site mic"}
+                      >
+                        {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                        <span className="text-xs ml-1.5">{isMuted ? "Mic Off" : "Mic (Live)"}</span>
+                      </Button>
 
-                  {/* Hear engineer (contractor speaker toggle) */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={`border-slate-700 ${isContractorSpeakerMuted ? "bg-red-950 text-red-400" : "bg-blue-950 text-blue-300"}`}
-                    onClick={toggleContractorSpeaker}
-                    title={isContractorSpeakerMuted ? "Unmute engineer voice" : "Mute engineer voice"}
-                  >
-                    {isContractorSpeakerMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                    <span className="text-xs ml-1.5">{isContractorSpeakerMuted ? "Eng. Voice Off" : "Eng. Voice (On)"}</span>
-                  </Button>
+                      {/* Toggle video */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={`border-slate-700 ${isVideoMuted ? "bg-red-950 text-red-400" : "bg-slate-800 text-slate-200"}`}
+                        onClick={toggleVideo}
+                        title={isVideoMuted ? "Turn Video On" : "Turn Video Off"}
+                      >
+                        {isVideoMuted ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
+                      </Button>
 
-                  {/* End call */}
-                  <Button size="sm" variant="destructive" className="gap-1.5" onClick={stopBroadcasting}>
-                    <PhoneOff className="h-4 w-4" />
-                    End Call
-                  </Button>
+                      {/* Hear engineer */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={`border-slate-700 ${isContractorSpeakerMuted ? "bg-red-950 text-red-400" : "bg-blue-950 text-blue-300"}`}
+                        onClick={toggleContractorSpeaker}
+                        title={isContractorSpeakerMuted ? "Unmute engineer voice" : "Mute engineer voice"}
+                      >
+                        {isContractorSpeakerMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                        <span className="text-xs ml-1.5">{isContractorSpeakerMuted ? "Eng. Voice Off" : "Eng. Voice (On)"}</span>
+                      </Button>
+
+                      {/* End call */}
+                      <Button size="sm" variant="destructive" className="gap-1.5" onClick={stopBroadcasting}>
+                        <PhoneOff className="h-4 w-4" />
+                        Stop Camera
+                      </Button>
+                    </>
+                  )}
                 </div>
               )}
 
               {/* ── Engineer Controls ── */}
-              {isEngineer && isViewing && (
+              {isEngineer && (
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Hear contractor (speaker toggle on video element) */}
+                  {/* Auto-Connect Toggle */}
                   <Button
                     size="sm"
-                    variant="outline"
-                    className={`border-slate-700 ${isEngineerAudioMuted ? "bg-red-950 text-red-400" : "bg-emerald-950 text-emerald-300"}`}
-                    onClick={toggleEngineerAudio}
-                    title={isEngineerAudioMuted ? "Unmute contractor voice" : "Mute contractor voice"}
+                    variant={autoConnect ? "default" : "outline"}
+                    className={`gap-1.5 ${autoConnect ? "bg-blue-600 hover:bg-blue-700 text-white" : "border-slate-700 text-slate-300"}`}
+                    onClick={toggleAutoConnect}
+                    title="Automatically connect as soon as the site phone is live"
                   >
-                    {isEngineerAudioMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                    <span className="text-xs ml-1.5">
-                      {isEngineerAudioMuted ? "Contractor Muted" : "Contractor Audio (On)"}
-                    </span>
+                    <Wifi className="h-3.5 w-3.5" />
+                    <span className="text-xs">{autoConnect ? "Auto-Connect: ON" : "Auto-Connect: OFF"}</span>
                   </Button>
 
-                  {/* Engineer mic toggle (contractor hears engineer) */}
-                  {isEngineerMicActive && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className={`border-slate-700 ${isEngineerMicMuted ? "bg-red-950 text-red-400" : "bg-blue-950 text-blue-300"}`}
-                      onClick={toggleEngineerMic}
-                      title={isEngineerMicMuted ? "Unmute your mic" : "Mute your mic"}
-                    >
-                      {isEngineerMicMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                      <span className="text-xs ml-1.5">
-                        {isEngineerMicMuted ? "Your Mic Off" : "Your Mic (Live)"}
-                      </span>
-                    </Button>
+                  {isViewing && (
+                    <>
+                      {/* Hear contractor */}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className={`border-slate-700 ${isEngineerAudioMuted ? "bg-red-950 text-red-400" : "bg-emerald-950 text-emerald-300"}`}
+                        onClick={toggleEngineerAudio}
+                        title={isEngineerAudioMuted ? "Unmute site audio" : "Mute site audio"}
+                      >
+                        {isEngineerAudioMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                        <span className="text-xs ml-1.5">
+                          {isEngineerAudioMuted ? "Site Muted" : "Site Audio (On)"}
+                        </span>
+                      </Button>
+
+                      {/* Engineer mic toggle */}
+                      {isEngineerMicActive && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className={`border-slate-700 ${isEngineerMicMuted ? "bg-red-950 text-red-400" : "bg-blue-950 text-blue-300"}`}
+                          onClick={toggleEngineerMic}
+                          title={isEngineerMicMuted ? "Unmute your mic" : "Mute your mic"}
+                        >
+                          {isEngineerMicMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                          <span className="text-xs ml-1.5">
+                            {isEngineerMicMuted ? "Your Mic Off" : "Your Mic (Live)"}
+                          </span>
+                        </Button>
+                      )}
+
+                      {/* Disconnect */}
+                      <Button size="sm" variant="destructive" className="gap-1.5" onClick={disconnectSiteFeed}>
+                        <PhoneOff className="h-4 w-4" />
+                        Disconnect
+                      </Button>
+                    </>
                   )}
-
-                  {/* Disconnect */}
-                  <Button size="sm" variant="destructive" className="gap-1.5" onClick={disconnectSiteFeed}>
-                    <PhoneOff className="h-4 w-4" />
-                    Disconnect
-                  </Button>
                 </div>
               )}
             </div>
@@ -716,25 +934,34 @@ export function LiveStreamTab({
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
-                <HardHat className="h-4 w-4 text-amber-500" />
-                Live Inspection Protocol
+                <Cctv className="h-4 w-4 text-emerald-500" />
+                24/7 Always-Live Site Camera
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-xs text-muted-foreground">
-              <div className="p-3 bg-muted/50 rounded-lg space-y-1">
-                <p className="font-semibold text-foreground">Who broadcasts?</p>
-                <p>The <strong>Contractor</strong> on the construction site uses their phone/tablet camera to show structural progress, concrete pouring, or issues.</p>
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg space-y-1">
+                <p className="font-semibold text-foreground flex items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5 text-emerald-500" />
+                  Always-Live CCTV Mode
+                </p>
+                <p>Mount a dedicated phone on site on a charger. Turn on <strong>24/7 CCTV Mode</strong>. The camera stays awake and automatically answers engineers whenever they open the dashboard.</p>
               </div>
+
               <div className="p-3 bg-muted/50 rounded-lg space-y-1">
-                <p className="font-semibold text-foreground">Who views?</p>
-                <p>The <strong>Engineer</strong> or <strong>Admin</strong> watches the real-time video feed remotely to verify quality, resolve issues, or approve site work without traveling.</p>
+                <p className="font-semibold text-foreground flex items-center gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5 text-blue-500" />
+                  Screen Wake Lock
+                </p>
+                <p>The app automatically prevents the site phone from locking or going to sleep while streaming.</p>
               </div>
+
               <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg space-y-1">
                 <p className="font-semibold text-foreground">🎙️ 2-Way Audio</p>
-                <p>Both <strong>Contractor</strong> and <strong>Engineer</strong> can speak and hear each other in real time — just like a phone call with live video.</p>
+                <p>Engineers can speak directly through the site phone speaker while watching the live video feed.</p>
               </div>
+
               <div className="border-t pt-2 space-y-2">
-                <p className="font-medium text-foreground">Channel ID:</p>
+                <p className="font-medium text-foreground">Site Channel ID:</p>
                 <code className="text-[11px] bg-muted px-2 py-1 rounded block truncate">
                   {broadcasterPeerId}
                 </code>
@@ -746,21 +973,21 @@ export function LiveStreamTab({
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <PhoneCall className="h-4 w-4 text-primary" />
-                Connection Guidelines
+                How to Setup Always-Live Feed
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-xs text-muted-foreground">
               <div className="flex items-start gap-2">
                 <span className="h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 font-bold">1</span>
-                <span>Contractor opens this tab on mobile at the site and clicks <strong>Start Site Camera</strong>.</span>
+                <span>Place site phone on a stand with charger and open this project.</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 font-bold">2</span>
-                <span>Engineer clicks <strong>Connect to Site Camera</strong> — browser asks for mic permission for 2-way audio.</span>
+                <span>Click <strong>Enable 24/7 CCTV Mode</strong> — phone keeps camera ready &amp; prevents sleep.</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 font-bold">3</span>
-                <span>Peer-to-peer WebRTC connection establishes with <strong>full 2-way audio + video</strong> at zero server cost.</span>
+                <span>Engineers can open their dashboard anytime — it automatically connects without anyone touching the site phone.</span>
               </div>
             </CardContent>
           </Card>
