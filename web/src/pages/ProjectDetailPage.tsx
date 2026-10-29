@@ -9,7 +9,7 @@ import {
   ArrowLeft, Building2, MapPin, IndianRupee, Calendar, TrendingUp,
   Package, HardHat, Receipt, ListTodo, AlertTriangle, Images,
   Construction, Plus, Check, X, ShieldCheck, Camera, CameraOff,
-  Sparkles, Users, Radio,
+  Sparkles, Users, Radio, Trash2,
 } from "lucide-react";
 import { LiveStreamTab } from "@/components/LiveStreamTab";
 import { REAL_TIME_MATERIALS, REAL_TIME_WORKERS, REAL_TIME_EXPENSES } from "@/lib/constructionCatalog";
@@ -573,7 +573,7 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
   const [dialogOpen, setDialogOpen] = useState(false);
   const [populatingLabour, setPopulatingLabour] = useState(false);
   const [attendanceDate, setAttendanceDate] = useState(todayISO());
-
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const { data: workers = [] } = useQuery({
     queryKey: ["workers", projectId],
     queryFn: async () => {
@@ -630,6 +630,26 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
     }
   };
 
+  const removeWorker = async (workerId: string, workerName: string) => {
+    if (!canEdit) return;
+    if (!window.confirm(`Remove "${workerName}" from this project? This will also delete their attendance records.`)) return;
+    setRemovingId(workerId);
+    try {
+      // Delete attendance records first (FK constraint)
+      await supabase.from("attendance").delete().eq("worker_id", workerId);
+      // Delete the worker
+      const { error } = await supabase.from("workers").delete().eq("id", workerId);
+      if (error) throw error;
+      toast.success(`${workerName} removed from project`);
+      queryClient.invalidateQueries({ queryKey: ["workers", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["attendance", projectId, attendanceDate] });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove worker");
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -668,6 +688,7 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
                   <TableHead>{t("labour.skill", language)}</TableHead>
                   <TableHead className="text-right">{t("labour.dailyWage", language)}</TableHead>
                   <TableHead>{t("common.actions", language)}</TableHead>
+                  {canEdit && <TableHead className="w-10"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -677,6 +698,20 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
                     <TableCell className="text-muted-foreground">{w.skill ?? "—"}</TableCell>
                     <TableCell className="text-right font-medium">{formatINR(w.daily_wage, language)}</TableCell>
                     <TableCell>{w.is_active ? <Badge variant="default">Active</Badge> : <Badge variant="secondary">Inactive</Badge>}</TableCell>
+                    {canEdit && (
+                      <TableCell>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => removeWorker(w.id, w.full_name)}
+                          disabled={removingId === w.id}
+                          title={`Remove ${w.full_name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -718,6 +753,18 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
                         </Button>
                       ))}
                     </div>
+                    {canEdit && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive shrink-0"
+                        onClick={() => removeWorker(w.id, w.full_name)}
+                        disabled={removingId === w.id}
+                        title={`Remove ${w.full_name}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               );
