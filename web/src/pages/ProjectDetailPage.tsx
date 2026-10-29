@@ -574,6 +574,9 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
   const [populatingLabour, setPopulatingLabour] = useState(false);
   const [attendanceDate, setAttendanceDate] = useState(todayISO());
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [removingSelected, setRemovingSelected] = useState(false);
+
   const { data: workers = [] } = useQuery({
     queryKey: ["workers", projectId],
     queryFn: async () => {
@@ -630,23 +633,63 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
     }
   };
 
+  // Remove a single worker
   const removeWorker = async (workerId: string, workerName: string) => {
     if (!canEdit) return;
-    if (!window.confirm(`Remove "${workerName}" from this project? This will also delete their attendance records.`)) return;
+    if (!window.confirm(`Remove "${workerName}" from this project? Their attendance records will also be deleted.`)) return;
     setRemovingId(workerId);
     try {
-      // Delete attendance records first (FK constraint)
       await supabase.from("attendance").delete().eq("worker_id", workerId);
-      // Delete the worker
       const { error } = await supabase.from("workers").delete().eq("id", workerId);
       if (error) throw error;
-      toast.success(`${workerName} removed from project`);
+      toast.success(`${workerName} removed`);
+      setSelectedIds((prev) => { const n = new Set(prev); n.delete(workerId); return n; });
       queryClient.invalidateQueries({ queryKey: ["workers", projectId] });
       queryClient.invalidateQueries({ queryKey: ["attendance", projectId, attendanceDate] });
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to remove worker");
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  // Remove all selected workers
+  const removeSelected = async () => {
+    if (!canEdit || selectedIds.size === 0) return;
+    const names = workers.filter((w) => selectedIds.has(w.id)).map((w) => w.full_name).join(", ");
+    if (!window.confirm(`Remove ${selectedIds.size} worker(s)?\n\n${names}\n\nThis will also delete their attendance records.`)) return;
+    setRemovingSelected(true);
+    try {
+      const ids = Array.from(selectedIds);
+      await supabase.from("attendance").delete().in("worker_id", ids);
+      const { error } = await supabase.from("workers").delete().in("id", ids);
+      if (error) throw error;
+      toast.success(`${ids.length} worker(s) removed from project`);
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["workers", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["attendance", projectId, attendanceDate] });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove workers");
+    } finally {
+      setRemovingSelected(false);
+    }
+  };
+
+  // Checkbox helpers
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+  const allSelected = workers.length > 0 && workers.every((w) => selectedIds.has(w.id));
+  const someSelected = selectedIds.size > 0 && !allSelected;
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(workers.map((w) => w.id)));
     }
   };
 
@@ -659,7 +702,20 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
             <p className="text-xs text-muted-foreground">Standard daily wage rates for skilled and unskilled construction labour</p>
           </div>
           {canEdit && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Remove Selected button — visible only when workers are checked */}
+              {selectedIds.size > 0 && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="gap-1.5"
+                  onClick={removeSelected}
+                  disabled={removingSelected}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {removingSelected ? "Removing..." : `Remove Selected (${selectedIds.size})`}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
@@ -677,6 +733,7 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
             </div>
           )}
         </div>
+
         {workers.length === 0 ? (
           <EmptyState icon={HardHat} title={t("common.noData", language)} />
         ) : (
@@ -684,6 +741,19 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
             <Table>
               <TableHeader>
                 <TableRow>
+                  {/* Select All checkbox in header */}
+                  {canEdit && (
+                    <TableHead className="w-10">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer accent-primary"
+                        checked={allSelected}
+                        ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                        onChange={toggleSelectAll}
+                        title={allSelected ? "Deselect all" : "Select all"}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>{t("labour.name", language)}</TableHead>
                   <TableHead>{t("labour.skill", language)}</TableHead>
                   <TableHead className="text-right">{t("labour.dailyWage", language)}</TableHead>
@@ -693,7 +763,21 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
               </TableHeader>
               <TableBody>
                 {workers.map((w) => (
-                  <TableRow key={w.id}>
+                  <TableRow
+                    key={w.id}
+                    className={selectedIds.has(w.id) ? "bg-destructive/5" : ""}
+                  >
+                    {/* Per-row checkbox */}
+                    {canEdit && (
+                      <TableCell className="w-10">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 cursor-pointer accent-primary"
+                          checked={selectedIds.has(w.id)}
+                          onChange={() => toggleSelect(w.id)}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="font-medium">{w.full_name}</TableCell>
                     <TableCell className="text-muted-foreground">{w.skill ?? "—"}</TableCell>
                     <TableCell className="text-right font-medium">{formatINR(w.daily_wage, language)}</TableCell>
@@ -734,13 +818,23 @@ function LabourTab({ projectId, canEdit, session }: { projectId: string; canEdit
               const record = attendance.find((a) => a.worker_id === w.id);
               const currentStatus = record?.status;
               return (
-                <Card key={w.id}>
+                <Card key={w.id} className={selectedIds.has(w.id) ? "border-destructive/40 bg-destructive/5" : ""}>
                   <CardContent className="flex items-center gap-3 p-3">
+                    {/* Checkbox on attendance card */}
+                    {canEdit && (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 cursor-pointer accent-primary shrink-0"
+                        checked={selectedIds.has(w.id)}
+                        onChange={() => toggleSelect(w.id)}
+                        title={`Select ${w.full_name}`}
+                      />
+                    )}
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold">{w.full_name}</p>
                       <p className="text-xs text-muted-foreground">{formatINR(w.daily_wage, language)}/day</p>
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 flex-wrap">
                       {(["present", "half_day", "absent", "leave"] as AttendanceStatus[]).map((s) => (
                         <Button
                           key={s}
