@@ -1477,15 +1477,16 @@ function PhotosTab({ projectId, session }: { projectId: string; session: { user:
 // ---------- Safety tab ----------
 
 const ROBOFLOW_WORKFLOW_URL = "https://serverless.roboflow.com/poornachandra-k-k/workflows/construction-site-safety-3dbwu";
+const ROBOFLOW_MODEL_URL = "https://detect.roboflow.com/construction-site-safety-3dbwu/1";
 const ROBOFLOW_API_KEY = import.meta.env.VITE_ROBOFLOW_API_KEY as string;
 
 const PPE_CLASS_MAP: Record<string, SafetyItem> = {
   helmet: "helmet", "hard-hat": "helmet", hardhat: "helmet", "safety helmet": "helmet", "hard hat": "helmet",
-  boots: "boots", "safety-boots": "boots", "safety boots": "boots", shoe: "boots",
+  boots: "boots", "safety-boots": "boots", "safety boots": "boots", shoe: "boots", "safety shoes": "boots", "safety-shoes": "boots",
   harness: "harness", "safety-harness": "harness", "safety harness": "harness",
   gloves: "gloves", "safety-gloves": "gloves", "safety gloves": "gloves",
   vest: "vest", "safety-vest": "vest", "safety vest": "vest", "hi-vis": "vest", "high-visibility": "vest",
-  goggles: "goggles", "safety-glasses": "goggles", glasses: "goggles",
+  goggles: "goggles", "safety-glasses": "goggles", glasses: "goggles", "eye protection": "goggles", "eye-protection": "goggles",
 };
 
 const SAFETY_ITEMS = ["helmet", "boots", "harness", "gloves", "vest", "goggles"] as const;
@@ -1528,7 +1529,7 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     },
   });
 
-  // Sends base64 frame directly to Roboflow — no storage upload needed
+  // Sends base64 frame to Roboflow workflow or trained model
   const runDetection = async () => {
     const videoEl = document.querySelector<HTMLVideoElement>("video[data-safety]");
     const canvas = canvasRef.current;
@@ -1540,17 +1541,39 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     canvas.getContext("2d")!.drawImage(videoEl, 0, 0, w, h);
     const base64 = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
     try {
-      const res = await fetch(ROBOFLOW_WORKFLOW_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${ROBOFLOW_API_KEY}` },
-        body: JSON.stringify({ inputs: { image: { type: "base64", value: base64 } } }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const json = await res.json();
-      const predictions: { class?: string }[] =
-        json?.outputs?.[0]?.predictions?.predictions ??
-        json?.outputs?.predictions?.predictions ??
-        json?.predictions ?? [];
+      let predictions: { class?: string }[] = [];
+
+      // Try direct trained model inference first
+      try {
+        const modelRes = await fetch(`${ROBOFLOW_MODEL_URL}?api_key=${ROBOFLOW_API_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: base64,
+        });
+        if (modelRes.ok) {
+          const modelJson = await modelRes.json();
+          predictions = modelJson?.predictions ?? [];
+        }
+      } catch {
+        // Fall back to workflow if direct model is not ready
+      }
+
+      // If direct model returned no predictions or errored, try workflow
+      if (predictions.length === 0) {
+        const res = await fetch(ROBOFLOW_WORKFLOW_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${ROBOFLOW_API_KEY}` },
+          body: JSON.stringify({ inputs: { image: { type: "base64", value: base64 } } }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          predictions =
+            json?.outputs?.[0]?.predictions?.predictions ??
+            json?.outputs?.predictions?.predictions ??
+            json?.predictions ?? [];
+        }
+      }
+
       const detected = new Set<SafetyItem>();
       for (const pred of predictions) {
         const label = (pred.class ?? "").toLowerCase();
