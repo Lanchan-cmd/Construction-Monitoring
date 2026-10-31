@@ -8,7 +8,7 @@ import {
 import {
   ArrowLeft, Building2, MapPin, IndianRupee, Calendar, TrendingUp,
   Package, HardHat, Receipt, ListTodo, AlertTriangle, Images,
-  Construction, Plus, Check, X, ShieldCheck, Camera, CameraOff,
+  Construction, Plus, Check, X, ShieldCheck, Camera, CameraOff, Upload,
   Sparkles, Users, Radio, Trash2,
 } from "lucide-react";
 import { LiveStreamTab } from "@/components/LiveStreamTab";
@@ -1478,6 +1478,7 @@ function PhotosTab({ projectId, session }: { projectId: string; session: { user:
 
 const ROBOFLOW_WORKFLOW_URL = "https://serverless.roboflow.com/poornachandra-k-k/workflows/construction-site-safety-3dbwu";
 const ROBOFLOW_MODEL_URL = "https://detect.roboflow.com/construction-site-safety-3dbwu/1";
+const ROBOFLOW_MODEL_V2_URL = "https://detect.roboflow.com/construction-site-safety-3dbwu/2";
 const ROBOFLOW_PPE_FALLBACK = "https://detect.roboflow.com/construction-ppe/1";
 const ROBOFLOW_API_KEY = import.meta.env.VITE_ROBOFLOW_API_KEY as string;
 
@@ -1536,6 +1537,7 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
   const [detectedBoxes, setDetectedBoxes] = useState<DetectedBox[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animFrameRef = useRef<number | null>(null);
@@ -1595,7 +1597,7 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     const scaleX = w / (videoEl.videoWidth || w || 1);
     const scaleY = h / (videoEl.videoHeight || h || 1);
 
-    // Draw detected PPE bounding boxes (Green for verified gear, Red for violations like NO-Hardhat)
+    // Draw detected PPE bounding boxes
     boxes.forEach((box) => {
       const bx = (box.x - box.width / 2) * scaleX;
       const by = (box.y - box.height / 2) * scaleY;
@@ -1632,11 +1634,44 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     });
   };
 
+  // Helper to query Roboflow API models
+  const queryRoboflowModel = async (base64: string): Promise<DetectedBox[]> => {
+    // 1. Try fine-tuned model (Version 1 or 2)
+    const endpoints = [ROBOFLOW_MODEL_V2_URL, ROBOFLOW_MODEL_URL, ROBOFLOW_PPE_FALLBACK];
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(`${ep}?api_key=${ROBOFLOW_API_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: base64,
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.predictions?.length) {
+            return json.predictions.map((p: any) => ({
+              x: p.x,
+              y: p.y,
+              width: p.width,
+              height: p.height,
+              class: p.class === "0" ? "Hardhat" : p.class === "1" ? "Safety Vest" : (p.class ?? "PPE"),
+              confidence: p.confidence ?? 0.8,
+            }));
+          }
+        }
+      } catch {
+        // Try next endpoint
+      }
+    }
+    return [];
+  };
+
   // Real AI PPE Detection via Roboflow Trained Model
   const runDetection = async () => {
     const videoEl = document.querySelector<HTMLVideoElement>("video[data-safety]");
     const canvas = canvasRef.current;
     if (!videoEl || !canvas) return;
+    if (videoEl.readyState < 2) return; // Wait until video frame is ready
+
     const w = videoEl.videoWidth || videoEl.clientWidth || 640;
     const h = videoEl.videoHeight || videoEl.clientHeight || 480;
     if (!w || !h) return;
@@ -1646,28 +1681,7 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     ctx.drawImage(videoEl, 0, 0, w, h);
     const base64 = canvas.toDataURL("image/jpeg", 0.75).split(",")[1];
 
-    let predictions: DetectedBox[] = [];
-
-    // Query trained Roboflow YOLOv8 model directly
-    try {
-      const res = await fetch(`${ROBOFLOW_MODEL_URL}?api_key=${ROBOFLOW_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: base64,
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json?.predictions?.length) {
-          predictions = json.predictions.map((p: any) => ({
-            x: p.x, y: p.y, width: p.width, height: p.height,
-            class: p.class ?? "PPE", confidence: p.confidence ?? 0.8,
-          }));
-        }
-      }
-    } catch {
-      // Model endpoint loading or offline
-    }
-
+    const predictions = await queryRoboflowModel(base64);
     setDetectedBoxes(predictions);
     renderOverlay(predictions, videoEl);
 
@@ -1677,12 +1691,12 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
 
     for (const pred of predictions) {
       const conf = pred.confidence ?? 0;
-      if (conf < 0.40) continue; // Ignore low confidence noise
+      if (conf < 0.22) continue; // Roboflow optimal F1 threshold
 
       const rawClass = (pred.class ?? "").trim();
       const lower = rawClass.toLowerCase();
 
-      // Explicit violations detected by the model (e.g. NO-Hardhat, NO-Safety Vest, NO-Mask)
+      // Explicit violations (e.g. NO-Hardhat, NO-Safety Vest)
       if (lower.startsWith("no-")) {
         violations.add(rawClass);
         if (lower.includes("hardhat") || lower.includes("helmet")) {
@@ -1704,7 +1718,7 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
       }
     }
 
-    // Auto-tick ONLY what was ACTUALLY detected with high confidence in the live frame
+    // Auto-tick ONLY what was ACTUALLY detected with confidence in the live frame
     if (verifiedGear.size > 0) {
       let anyNew = false;
       setChecks((prev) => {
@@ -1725,7 +1739,7 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     if (violations.size > 0 && verifiedGear.size > 0) {
       setScanStatus(`✓ Verified: ${[...verifiedGear].join(", ")} | ⚠️ Violation: ${[...violations].join(", ")}`);
     } else if (violations.size > 0) {
-      setScanStatus(`⚠️ Safety Alert: ${[...violations].join(", ")} — Worker is missing required PPE!`);
+      setScanStatus(`⚠️ Safety Alert: ${[...violations].join(", ")} — Worker missing required PPE!`);
     } else if (verifiedGear.size > 0) {
       setScanStatus(`✓ Verified PPE gear in frame: ${[...verifiedGear].join(", ")}`);
     } else {
@@ -1751,7 +1765,6 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
       toast.error(location.protocol === "http:" ? "Camera requires HTTPS — use localhost or https://." : "Camera not supported.");
       return;
     }
-    // Reset checklist items to false so missing items are never pre-ticked
     setChecks({ helmet: false, boots: false, harness: false, gloves: false, vest: false, goggles: false });
     setDetectedBoxes([]);
     try {
@@ -1796,6 +1809,48 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     setCapturedImage(canvas.toDataURL("image/jpeg", 0.85));
     stopCamera();
     toast.success("Inspection snapshot captured and attached");
+  };
+
+  // Upload Photo and Scan via Roboflow AI
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = reader.result as string;
+      setCapturedImage(dataUrl);
+      const base64 = dataUrl.split(",")[1];
+      toast.info("Scanning uploaded photo with Roboflow YOLOv8...");
+      setScanning(true);
+      setScanStatus("Analyzing photo for PPE items...");
+
+      const predictions = await queryRoboflowModel(base64);
+      setDetectedBoxes(predictions);
+
+      const verifiedGear = new Set<SafetyItem>();
+      for (const pred of predictions) {
+        if ((pred.confidence ?? 0) < 0.22) continue;
+        const lower = (pred.class ?? "").toLowerCase();
+        const mapped = PPE_CLASS_MAP[lower] ?? PPE_CLASS_MAP[pred.class ?? ""];
+        if (mapped) verifiedGear.add(mapped);
+      }
+
+      setScanning(false);
+      if (verifiedGear.size > 0) {
+        setChecks((prev) => {
+          const next = { ...prev };
+          verifiedGear.forEach((k) => { next[k] = true; });
+          return next;
+        });
+        playScanChime();
+        toast.success(`✓ AI Verified & Ticked: ${[...verifiedGear].join(", ")}`);
+        setScanStatus(`✓ Auto-detected & ticked: ${[...verifiedGear].join(", ")}`);
+      } else {
+        toast.warning("No safety gear detected in photo. Worker must wear certified PPE.");
+        setScanStatus("⚠️ No PPE detected in uploaded photo.");
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   // Demo: Simulates compliant worker with all safety gears verified
@@ -1849,7 +1904,6 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
       toast.error("⚠️ Violation Detected: Worker has NO Helmet & NO Gloves! Auto-ticks blocked.");
     }, 600);
   };
-
   const handleSave = async () => {
     if (!selectedWorker) { toast.error("Select a worker first"); return; }
     const missing = SAFETY_ITEMS.filter((k) => !checks[k]);
@@ -1959,10 +2013,14 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
             </Label>
 
             {!cameraOpen && !capturedImage && (
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Button type="button" onClick={startCamera} className="gap-2 flex-1 bg-amber-600 hover:bg-amber-700 text-white">
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" onClick={startCamera} className="gap-2 flex-1 min-w-[180px] bg-amber-600 hover:bg-amber-700 text-white">
                   <Camera className="h-4 w-4" />Open Camera &amp; Auto-Scan
                 </Button>
+                <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} className="gap-2 flex-1 min-w-[160px]">
+                  <Upload className="h-4 w-4 text-blue-500" />Upload Photo to Scan
+                </Button>
+                <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={handlePhotoUpload} />
                 <Button type="button" variant="outline" onClick={handleScanSampleWorker} className="gap-2">
                   <Sparkles className="h-4 w-4 text-green-500" />Test Compliant Worker
                 </Button>
@@ -1987,7 +2045,10 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
                     </div>
                   )}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" onClick={() => runDetection()} className="gap-2 bg-amber-600 hover:bg-amber-700 text-white">
+                    <Camera className="h-4 w-4" />Scan &amp; Auto-Tick Now
+                  </Button>
                   <Button type="button" onClick={captureAndClose} className="flex-1 gap-2 bg-green-600 hover:bg-green-700 text-white">
                     <Check className="h-4 w-4" />Capture &amp; Confirm Checks
                   </Button>
