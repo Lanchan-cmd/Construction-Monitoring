@@ -18,6 +18,30 @@ DECLARE
   v_hashed_pw text := crypt('Nirman@2026', gen_salt('bf'));
 BEGIN
 
+  -- 0. Clean up any existing records with these emails or IDs for clean, reproducible insertion
+  DELETE FROM public.projects WHERE id IN (
+    'b1111111-0001-4000-8000-000000000001',
+    'b2222222-0002-4000-8000-000000000002',
+    'b3333333-0003-4000-8000-000000000003',
+    'b4444444-0004-4000-8000-000000000004',
+    'b5555555-0005-4000-8000-000000000005',
+    'b6666666-0006-4000-8000-000000000006',
+    'b7777777-0007-4000-8000-000000000007',
+    'b8888888-0008-4000-8000-000000000008',
+    'b9999999-0009-4000-8000-000000000009',
+    'baaaaaaa-0010-4000-8000-000000000010'
+  );
+
+  DELETE FROM public.profiles WHERE email IN (
+    'engineer1@nirman.com', 'engineer2@nirman.com', 'engineer3@nirman.com', 'engineer4@nirman.com', 'engineer5@nirman.com',
+    'contractor1@nirman.com', 'contractor2@nirman.com', 'contractor3@nirman.com', 'contractor4@nirman.com', 'contractor5@nirman.com'
+  );
+
+  DELETE FROM auth.users WHERE email IN (
+    'engineer1@nirman.com', 'engineer2@nirman.com', 'engineer3@nirman.com', 'engineer4@nirman.com', 'engineer5@nirman.com',
+    'contractor1@nirman.com', 'contractor2@nirman.com', 'contractor3@nirman.com', 'contractor4@nirman.com', 'contractor5@nirman.com'
+  );
+
   -- 1.1 Engineer 1: Rajesh Kumar
   INSERT INTO auth.users (
     id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -404,3 +428,4 @@ BEGIN
     contractor_id = EXCLUDED.contractor_id;
 
 END $$;
+
