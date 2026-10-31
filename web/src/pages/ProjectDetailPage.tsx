@@ -1595,143 +1595,44 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     const scaleX = w / (videoEl.videoWidth || w || 1);
     const scaleY = h / (videoEl.videoHeight || h || 1);
 
-    // Draw detected PPE bounding boxes
+    // Draw detected PPE bounding boxes (Green for verified gear, Red for violations like NO-Hardhat)
     boxes.forEach((box) => {
       const bx = (box.x - box.width / 2) * scaleX;
       const by = (box.y - box.height / 2) * scaleY;
       const bw = box.width * scaleX;
       const bh = box.height * scaleY;
 
+      const isViolation = box.class.toLowerCase().startsWith("no-");
+      const isPerson = box.class.toLowerCase() === "person";
+      const strokeColor = isViolation ? "#ef4444" : isPerson ? "#38bdf8" : "#22c55e";
+      const fillColor = isViolation ? "rgba(239, 68, 68, 0.15)" : isPerson ? "rgba(56, 189, 248, 0.08)" : "rgba(34, 197, 94, 0.15)";
+      const tagBg = isViolation ? "#dc2626" : isPerson ? "#0284c7" : "#15803d";
+
       // Glow box
-      ctx.strokeStyle = "#22c55e";
+      ctx.strokeStyle = strokeColor;
       ctx.lineWidth = 2.5;
-      ctx.shadowColor = "#22c55e";
-      ctx.shadowBlur = 8;
+      ctx.shadowColor = strokeColor;
+      ctx.shadowBlur = 6;
       ctx.strokeRect(bx, by, bw, bh);
       ctx.shadowBlur = 0;
 
       // Semi-transparent fill
-      ctx.fillStyle = "rgba(34, 197, 94, 0.12)";
+      ctx.fillStyle = fillColor;
       ctx.fillRect(bx, by, bw, bh);
 
       // Label tag
-      const label = `✓ ${box.class} ${Math.round(box.confidence * 100)}%`;
+      const icon = isViolation ? "⚠️" : isPerson ? "👤" : "✓";
+      const label = `${icon} ${box.class} ${Math.round(box.confidence * 100)}%`;
       ctx.font = "bold 11px system-ui, sans-serif";
       const textWidth = ctx.measureText(label).width;
-      ctx.fillStyle = "#15803d";
+      ctx.fillStyle = tagBg;
       ctx.fillRect(bx, Math.max(0, by - 22), textWidth + 12, 22);
       ctx.fillStyle = "#ffffff";
       ctx.fillText(label, bx + 6, Math.max(15, by - 6));
     });
   };
 
-  // Real-time computer vision color & region analyzer running on canvas pixels
-  const analyzeFrameLocally = (ctx: CanvasRenderingContext2D, width: number, height: number): DetectedBox[] => {
-    const detected: DetectedBox[] = [];
-    try {
-      const frameData = ctx.getImageData(0, 0, width, height).data;
-
-      // 1. Head zone (top 5% - 35% height) -> Hardhat detection
-      let yellowHead = 0, orangeHead = 0, whiteHead = 0, blueHead = 0;
-      const headTotal = (height * 0.3) * width;
-      for (let y = Math.floor(height * 0.05); y < Math.floor(height * 0.35); y += 4) {
-        for (let x = Math.floor(width * 0.2); x < Math.floor(width * 0.8); x += 4) {
-          const idx = (y * width + x) * 4;
-          const r = frameData[idx], g = frameData[idx + 1], b = frameData[idx + 2];
-          if (r > 150 && g > 140 && b < 90) yellowHead++;
-          else if (r > 170 && g > 70 && g < 140 && b < 60) orangeHead++;
-          else if (r > 200 && g > 200 && b > 200) whiteHead++;
-          else if (r < 80 && g < 130 && b > 150) blueHead++;
-        }
-      }
-      const headSamples = (headTotal / 16) || 1;
-      const helmetScore = Math.max(yellowHead, orangeHead, whiteHead, blueHead) / headSamples;
-      if (helmetScore > 0.05) {
-        detected.push({
-          x: width * 0.5,
-          y: height * 0.2,
-          width: width * 0.35,
-          height: height * 0.22,
-          class: "Hardhat",
-          confidence: Math.min(0.96, 0.70 + helmetScore * 2),
-        });
-      }
-
-      // 2. Torso zone (30% - 75% height) -> Hi-Vis Safety Vest detection
-      let hiVisLime = 0, hiVisOrange = 0;
-      for (let y = Math.floor(height * 0.3); y < Math.floor(height * 0.75); y += 4) {
-        for (let x = Math.floor(width * 0.15); x < Math.floor(width * 0.85); x += 4) {
-          const idx = (y * width + x) * 4;
-          const r = frameData[idx], g = frameData[idx + 1], b = frameData[idx + 2];
-          if (r > 140 && g > 170 && b < 100) hiVisLime++;
-          else if (r > 180 && g > 85 && b < 70) hiVisOrange++;
-        }
-      }
-      const torsoSamples = ((height * 0.45 * width * 0.7) / 16) || 1;
-      const vestScore = (hiVisLime + hiVisOrange) / torsoSamples;
-      if (vestScore > 0.04) {
-        detected.push({
-          x: width * 0.5,
-          y: height * 0.52,
-          width: width * 0.55,
-          height: height * 0.42,
-          class: "Safety Vest",
-          confidence: Math.min(0.97, 0.75 + vestScore * 2),
-        });
-      }
-
-      // 3. Hands zone (perimeter left & right at 40% - 75%) -> Safety Gloves
-      let glovePix = 0;
-      for (let y = Math.floor(height * 0.4); y < Math.floor(height * 0.75); y += 4) {
-        for (const xRange of [[0.05, 0.25], [0.75, 0.95]]) {
-          for (let x = Math.floor(width * xRange[0]); x < Math.floor(width * xRange[1]); x += 4) {
-            const idx = (y * width + x) * 4;
-            const r = frameData[idx], g = frameData[idx + 1], b = frameData[idx + 2];
-            if ((r > 160 && g > 80 && b < 80) || (r > 150 && g > 140 && b < 80) || (r < 50 && g < 50 && b < 50)) {
-              glovePix++;
-            }
-          }
-        }
-      }
-      const gloveSamples = ((height * 0.35 * width * 0.4) / 16) || 1;
-      if (glovePix / gloveSamples > 0.08) {
-        detected.push({
-          x: width * 0.2,
-          y: height * 0.6,
-          width: width * 0.2,
-          height: height * 0.2,
-          class: "Gloves",
-          confidence: 0.88,
-        });
-      }
-
-      // 4. Lower extremities (bottom 70% - 98%) -> Safety Shoes/Boots
-      let darkBoots = 0;
-      for (let y = Math.floor(height * 0.75); y < Math.floor(height * 0.98); y += 4) {
-        for (let x = Math.floor(width * 0.25); x < Math.floor(width * 0.75); x += 4) {
-          const idx = (y * width + x) * 4;
-          const r = frameData[idx], g = frameData[idx + 1], b = frameData[idx + 2];
-          if (r < 75 && g < 75 && b < 75) darkBoots++;
-        }
-      }
-      const bootSamples = ((height * 0.23 * width * 0.5) / 16) || 1;
-      if (darkBoots / bootSamples > 0.12) {
-        detected.push({
-          x: width * 0.5,
-          y: height * 0.88,
-          width: width * 0.45,
-          height: height * 0.18,
-          class: "Safety Shoes",
-          confidence: 0.85,
-        });
-      }
-    } catch {
-      // In case canvas cross-origin or buffer limits apply
-    }
-    return detected;
-  };
-
-  // Hybrid AI PPE Detection: Roboflow Cloud Model + Fallback Universe Model + Local Frame Analyzer
+  // Real AI PPE Detection via Roboflow Trained Model
   const runDetection = async () => {
     const videoEl = document.querySelector<HTMLVideoElement>("video[data-safety]");
     const canvas = canvasRef.current;
@@ -1747,7 +1648,7 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
 
     let predictions: DetectedBox[] = [];
 
-    // Tier 1: Roboflow trained model
+    // Query trained Roboflow YOLOv8 model directly
     try {
       const res = await fetch(`${ROBOFLOW_MODEL_URL}?api_key=${ROBOFLOW_API_KEY}`, {
         method: "POST",
@@ -1764,53 +1665,51 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
         }
       }
     } catch {
-      // Direct model offline or still training
-    }
-
-    // Tier 2: Roboflow Universe PPE model
-    if (predictions.length === 0) {
-      try {
-        const res = await fetch(`${ROBOFLOW_PPE_FALLBACK}?api_key=${ROBOFLOW_API_KEY}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: base64,
-        });
-        if (res.ok) {
-          const json = await res.json();
-          if (json?.predictions?.length) {
-            predictions = json.predictions.map((p: any) => ({
-              x: p.x, y: p.y, width: p.width, height: p.height,
-              class: p.class === "0" ? "Hardhat" : p.class === "1" ? "Safety Vest" : (p.class ?? "PPE"),
-              confidence: p.confidence ?? 0.82,
-            }));
-          }
-        }
-      } catch {
-        // Fallback network unavailable
-      }
-    }
-
-    // Tier 3: Local computer vision frame analyzer
-    if (predictions.length === 0) {
-      predictions = analyzeFrameLocally(ctx, w, h);
+      // Model endpoint loading or offline
     }
 
     setDetectedBoxes(predictions);
     renderOverlay(predictions, videoEl);
 
-    // Auto-tick detected safety items
-    const newlyDetected: SafetyItem[] = [];
+    // Strictly process genuine detections vs explicit violations
+    const verifiedGear = new Set<SafetyItem>();
+    const violations = new Set<string>();
+
     for (const pred of predictions) {
-      const label = (pred.class ?? "").toLowerCase();
-      const mapped = PPE_CLASS_MAP[label] ?? PPE_CLASS_MAP[pred.class ?? ""];
-      if (mapped) newlyDetected.push(mapped);
+      const conf = pred.confidence ?? 0;
+      if (conf < 0.40) continue; // Ignore low confidence noise
+
+      const rawClass = (pred.class ?? "").trim();
+      const lower = rawClass.toLowerCase();
+
+      // Explicit violations detected by the model (e.g. NO-Hardhat, NO-Safety Vest, NO-Mask)
+      if (lower.startsWith("no-")) {
+        violations.add(rawClass);
+        if (lower.includes("hardhat") || lower.includes("helmet")) {
+          setChecks((p) => ({ ...p, helmet: false }));
+        }
+        if (lower.includes("vest")) {
+          setChecks((p) => ({ ...p, vest: false }));
+        }
+        if (lower.includes("mask") || lower.includes("goggles")) {
+          setChecks((p) => ({ ...p, goggles: false }));
+        }
+        continue;
+      }
+
+      // Positive PPE detections
+      const mapped = PPE_CLASS_MAP[lower] ?? PPE_CLASS_MAP[rawClass];
+      if (mapped) {
+        verifiedGear.add(mapped);
+      }
     }
 
-    if (newlyDetected.length > 0) {
+    // Auto-tick ONLY what was ACTUALLY detected with high confidence in the live frame
+    if (verifiedGear.size > 0) {
       let anyNew = false;
       setChecks((prev) => {
         const next = { ...prev };
-        newlyDetected.forEach((k) => {
+        verifiedGear.forEach((k) => {
           if (!next[k]) anyNew = true;
           next[k] = true;
         });
@@ -1818,11 +1717,19 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
       });
       if (anyNew) {
         playScanChime();
-        toast.success(`✓ Auto-scanned & ticked: ${[...new Set(newlyDetected)].join(", ")}`);
+        toast.success(`✓ AI Verified & Ticked: ${[...verifiedGear].join(", ")}`);
       }
-      setScanStatus(`✓ Auto-detected & ticked: ${[...new Set(newlyDetected)].join(", ")}`);
+    }
+
+    // Update scan status banner
+    if (violations.size > 0 && verifiedGear.size > 0) {
+      setScanStatus(`✓ Verified: ${[...verifiedGear].join(", ")} | ⚠️ Violation: ${[...violations].join(", ")}`);
+    } else if (violations.size > 0) {
+      setScanStatus(`⚠️ Safety Alert: ${[...violations].join(", ")} — Worker is missing required PPE!`);
+    } else if (verifiedGear.size > 0) {
+      setScanStatus(`✓ Verified PPE gear in frame: ${[...verifiedGear].join(", ")}`);
     } else {
-      setScanStatus("Scanning live feed for PPE gear (Hardhat, Vest, Boots, Gloves)...");
+      setScanStatus("🔍 AI Scanning — Point camera at worker. Missing gear will NOT be ticked.");
     }
   };
 
@@ -1844,6 +1751,9 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
       toast.error(location.protocol === "http:" ? "Camera requires HTTPS — use localhost or https://." : "Camera not supported.");
       return;
     }
+    // Reset checklist items to false so missing items are never pre-ticked
+    setChecks({ helmet: false, boots: false, harness: false, gloves: false, vest: false, goggles: false });
+    setDetectedBoxes([]);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -1851,7 +1761,7 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
       streamRef.current = stream;
       setCameraOpen(true);
       setScanning(true);
-      setScanStatus("Camera active — auto-scanning for safety gear...");
+      setScanStatus("Camera active — point at worker wearing safety gear...");
       startScanLoop();
     } catch (err: unknown) {
       const name = err instanceof Error ? err.name : "";
@@ -1885,14 +1795,14 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
     canvas.getContext("2d")!.drawImage(videoEl, 0, 0, w, h);
     setCapturedImage(canvas.toDataURL("image/jpeg", 0.85));
     stopCamera();
-    toast.success("Snapshot captured and attached to safety checklist");
+    toast.success("Inspection snapshot captured and attached");
   };
 
-  // Instant demo scanner: auto-detects and auto-ticks all gears with sample worker simulation
+  // Demo: Simulates compliant worker with all safety gears verified
   const handleScanSampleWorker = () => {
-    toast.info("Simulating AI PPE scan on site worker...");
+    toast.info("Testing with sample compliant worker photo...");
     setScanning(true);
-    setScanStatus("Analyzing worker PPE: Hardhat, Vest, Boots, Gloves, Goggles, Harness...");
+    setScanStatus("AI analyzing compliant worker: Hardhat, Vest, Boots, Gloves, Goggles, Harness...");
     setTimeout(() => {
       setChecks({
         helmet: true,
@@ -1902,11 +1812,42 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
         harness: true,
         goggles: true,
       });
+      setDetectedBoxes([
+        { x: 320, y: 80, width: 90, height: 70, class: "Hardhat", confidence: 0.94 },
+        { x: 320, y: 220, width: 170, height: 210, class: "Safety Vest", confidence: 0.97 },
+        { x: 190, y: 260, width: 60, height: 60, class: "Gloves", confidence: 0.88 },
+        { x: 450, y: 260, width: 60, height: 60, class: "Gloves", confidence: 0.86 },
+        { x: 320, y: 440, width: 130, height: 80, class: "Safety Shoes", confidence: 0.91 },
+      ]);
       playScanChime();
       setScanning(false);
       setScanStatus("✓ All 6 Safety Gears Verified & Ticked!");
-      toast.success("✓ Auto-scanned & ticked all safety gears: Helmet, Vest, Boots, Gloves, Harness, Goggles!");
-    }, 700);
+      toast.success("✓ Verified: Hardhat, Safety Vest, Boots, Gloves, Harness, Goggles!");
+    }, 600);
+  };
+
+  // Demo: Simulates worker missing Hardhat & Gloves (Safety Violation!)
+  const handleScanNonCompliantWorker = () => {
+    toast.warning("Testing with non-compliant worker (Missing Helmet & Gloves)...");
+    setScanning(true);
+    setChecks({
+      helmet: false,
+      vest: true,
+      boots: true,
+      gloves: false,
+      harness: false,
+      goggles: false,
+    });
+    setDetectedBoxes([
+      { x: 320, y: 80, width: 100, height: 80, class: "NO-Hardhat", confidence: 0.96 },
+      { x: 320, y: 220, width: 160, height: 200, class: "Safety Vest", confidence: 0.92 },
+      { x: 320, y: 260, width: 220, height: 450, class: "Person", confidence: 0.89 },
+    ]);
+    setTimeout(() => {
+      setScanning(false);
+      setScanStatus("⚠️ VIOLATION: NO-Hardhat detected! Helmet & Gloves are missing!");
+      toast.error("⚠️ Violation Detected: Worker has NO Helmet & NO Gloves! Auto-ticks blocked.");
+    }, 600);
   };
 
   const handleSave = async () => {
@@ -2023,7 +1964,10 @@ function SafetyTab({ projectId, session }: { projectId: string; session: { user:
                   <Camera className="h-4 w-4" />Open Camera &amp; Auto-Scan
                 </Button>
                 <Button type="button" variant="outline" onClick={handleScanSampleWorker} className="gap-2">
-                  <Sparkles className="h-4 w-4 text-amber-500" />Scan Demo Worker
+                  <Sparkles className="h-4 w-4 text-green-500" />Test Compliant Worker
+                </Button>
+                <Button type="button" variant="outline" onClick={handleScanNonCompliantWorker} className="gap-2 text-red-600 border-red-300 hover:bg-red-50 dark:hover:bg-red-950">
+                  <AlertTriangle className="h-4 w-4 text-red-500" />Test Missing Gear
                 </Button>
               </div>
             )}

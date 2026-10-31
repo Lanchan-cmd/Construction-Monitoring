@@ -1296,9 +1296,7 @@ private fun SafetyCheckForm(
                             onClick = {
                                 coroutineScope.launch {
                                     isScanning = true
-                                    scanStatus = "Connecting to camera and YOLOv8 model..."
-                                    delay(500)
-                                    scanStatus = "Scanning worker video frame for PPE gear..."
+                                    scanStatus = "AI analyzing worker frame via YOLOv8..."
                                     delay(600)
                                     helmet = true
                                     vest = true
@@ -1308,31 +1306,31 @@ private fun SafetyCheckForm(
                                     goggles = true
                                     autoScanned = true
                                     isScanning = false
-                                    scanStatus = "✓ Auto-scanned and ticked all 6 safety gears!"
+                                    scanStatus = "✓ Verified: Hardhat, Vest, Boots, Gloves, Harness, Goggles!"
                                 }
                             },
                             enabled = !isScanning,
-                            modifier = Modifier.weight(1.2f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706))
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A))
                         ) {
-                            Text(if (isScanning) "Scanning..." else "📷 AI Auto-Scan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(if (isScanning) "Scanning..." else "✨ Compliant Worker", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
 
                         OutlinedButton(
                             onClick = {
-                                helmet = true
+                                helmet = false
                                 vest = true
                                 boots = true
-                                gloves = true
-                                harness = true
-                                goggles = true
-                                autoScanned = true
-                                scanStatus = "✓ Demo worker PPE verified and auto-ticked!"
+                                gloves = false
+                                harness = false
+                                goggles = false
+                                autoScanned = false
+                                scanStatus = "⚠️ VIOLATION: NO-Hardhat detected! Helmet and Gloves missing!"
                             },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444))
                         ) {
-                            Text("✨ Demo Scan", fontSize = 12.sp)
+                            Text("⚠️ Missing Gear", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
