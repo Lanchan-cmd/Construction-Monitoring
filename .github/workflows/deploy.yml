@@ -37,6 +37,9 @@ jobs:
       - name: Build
         run: npm run build
         env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_ROBOFLOW_API_KEY: ${{ secrets.VITE_ROBOFLOW_API_KEY || 'XXjz6CMWnzcUxlr97HiC' }}
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
